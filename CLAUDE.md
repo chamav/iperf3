@@ -135,6 +135,51 @@ com.iperf3client/
 - Material 3 для дизайна
 - Coroutines + Flow для асинхронности
 
+## Отладка и диагностика
+
+### Логирование
+Приложение использует централизованную систему логирования через `Logger` класс:
+
+```bash
+# Просмотр логов в режиме реального времени
+adb logcat -s "IperfClient:*"
+
+# Просмотр только ошибок
+adb logcat -s "IperfClient:*" "*:E"
+
+# Очистка логов
+adb logcat -c
+```
+
+### Файлы логов
+- **Основные логи**: `/data/data/com.iperf3client/files/logs/iperf_client.log`
+- **Краш-репорты**: `/data/data/com.iperf3client/files/crash_report.txt`
+- **Логи тестов**: `/data/data/com.iperf3client/files/logs/iperf3_[sessionId].log`
+
+### Извлечение логов с устройства
+```bash
+# Извлечь основной лог-файл
+adb pull /data/data/com.iperf3client/files/logs/iperf_client.log ./
+
+# Извлечь краш-репорт
+adb pull /data/data/com.iperf3client/files/crash_report.txt ./
+
+# Извлечь все логи
+adb pull /data/data/com.iperf3client/files/logs/ ./logs/
+```
+
+### Диагностика падений
+1. **Проверить logcat**: `adb logcat -s "IperfClient:*" "*:E" "*:W"`
+2. **Проверить файл краша**: `/data/data/com.iperf3client/files/crash_report.txt`
+3. **Проверить состояние сервиса**: поиск по тегу "IperfTestService"
+
+### Основные теги логирования
+- `IperfEngine` - работа с iperf3 движком
+- `HomeViewModel` - логика главного экрана
+- `IperfTestService` - фоновый сервис тестирования
+- `CrashHandler` - обработчик критических ошибок
+- `Logger` - система логирования
+
 ## Статус MVP
 ✅ **MVP готов к сборке APK**
 - Все основные экраны реализованы
@@ -142,3 +187,4 @@ com.iperf3client/
 - Mock engine готов к замене
 - Поддержка складных устройств
 - Локализация настроена
+- Система логирования и обработки ошибок настроена

@@ -16,6 +16,7 @@ import com.iperf3client.IperfApplication
 import com.iperf3client.MainActivity
 import com.iperf3client.R
 import com.iperf3client.data.engine.IperfEngineImpl
+import com.iperf3client.data.utils.Logger
 import com.iperf3client.domain.model.IperfEvent
 import com.iperf3client.domain.model.TestParams
 import com.iperf3client.domain.model.TestStatus
@@ -42,6 +43,7 @@ class IperfTestService : Service() {
     private val progressCallbacks = mutableSetOf<(IperfEvent) -> Unit>()
     
     companion object {
+        private const val TAG = "IperfTestService"
         private const val NOTIFICATION_ID = 1001
         const val ACTION_START_TEST = "com.iperf3client.START_TEST"
         const val ACTION_STOP_TEST = "com.iperf3client.STOP_TEST"
@@ -69,38 +71,57 @@ class IperfTestService : Service() {
     
     override fun onCreate() {
         super.onCreate()
+        Logger.i(TAG, "IperfTestService created")
         
-        val app = application as IperfApplication
-        val iperfEngine = IperfEngineImpl(this)
+        try {
+            val app = application as IperfApplication
+            val iperfEngine = IperfEngineImpl(this)
         
-        runTestUseCase = RunTestUseCase(
-            iperfEngine = iperfEngine,
-            historyRepository = app.historyRepository,
-            settingsRepository = app.settingsRepository,
-            context = this
-        )
-        
-        notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        createNotificationChannel()
+            runTestUseCase = RunTestUseCase(
+                iperfEngine = iperfEngine,
+                historyRepository = app.historyRepository,
+                settingsRepository = app.settingsRepository,
+                context = this
+            )
+            
+            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            createNotificationChannel()
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to initialize IperfTestService", e)
+            throw e
+        }
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START_TEST -> {
-                val params = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_TEST_PARAMS, TestParams::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_TEST_PARAMS)
+        Logger.d(TAG, "onStartCommand called with action: ${intent?.action}")
+        
+        try {
+            when (intent?.action) {
+                ACTION_START_TEST -> {
+                    val params = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(EXTRA_TEST_PARAMS, TestParams::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(EXTRA_TEST_PARAMS)
+                    }
+                    
+                    if (params != null) {
+                        Logger.i(TAG, "Starting test with params: $params")
+                        startTest(params)
+                    } else {
+                        Logger.e(TAG, "Received START_TEST intent but params are null")
+                    }
                 }
-                
-                if (params != null) {
-                    startTest(params)
+                ACTION_STOP_TEST -> {
+                    Logger.i(TAG, "Stopping test via intent")
+                    stopTest()
+                }
+                else -> {
+                    Logger.w(TAG, "Unknown action: ${intent?.action}")
                 }
             }
-            ACTION_STOP_TEST -> {
-                stopTest()
-            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Error in onStartCommand", e)
         }
         
         return START_NOT_STICKY
@@ -109,21 +130,34 @@ class IperfTestService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     
     override fun onDestroy() {
+        Logger.i(TAG, "IperfTestService destroyed")
         super.onDestroy()
-        releaseWakeLock()
-        serviceScope.cancel()
+        try {
+            releaseWakeLock()
+            serviceScope.cancel()
+        } catch (e: Exception) {
+            Logger.e(TAG, "Error during service destroy", e)
+        }
     }
     
     private fun startTest(params: TestParams) {
         if (currentStatus == TestStatus.RUNNING) {
+            Logger.w(TAG, "Test already running, ignoring start request")
             return
         }
         
+        Logger.i(TAG, "Starting foreground test service")
         currentTestParams = params
         updateStatus(TestStatus.RUNNING)
         
-        startForeground(NOTIFICATION_ID, createNotification())
-        acquireWakeLock()
+        try {
+            startForeground(NOTIFICATION_ID, createNotification())
+            acquireWakeLock()
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to start foreground service", e)
+            updateStatus(TestStatus.ERROR)
+            return
+        }
         
         serviceScope.launch {
             try {
@@ -156,7 +190,13 @@ class IperfTestService : Service() {
                         }
                     }
                     .launchIn(this)
+            } catch (e: CancellationException) {
+                Logger.i(TAG, "Test was cancelled")
+                updateStatus(TestStatus.CANCELLED)
+                updateNotification("Test cancelled")
+                stopSelf()
             } catch (e: Exception) {
+                Logger.e(TAG, "Test execution failed", e)
                 updateStatus(TestStatus.ERROR)
                 updateNotification("Test failed: ${e.message}")
                 notifyProgress(IperfEvent.Error(e.message ?: "Unknown error", currentSessionId))
@@ -167,15 +207,23 @@ class IperfTestService : Service() {
     
     private fun stopTest() {
         if (currentStatus == TestStatus.RUNNING) {
+            Logger.i(TAG, "Stopping test, session: $currentSessionId")
             serviceScope.launch {
-                currentSessionId?.let { sessionId ->
-                    // TODO: Stop the actual test
-                    updateStatus(TestStatus.CANCELLED)
-                    updateNotification("Test cancelled")
-                    notifyProgress(IperfEvent.Error("Test cancelled by user", sessionId))
+                try {
+                    currentSessionId?.let { sessionId ->
+                        // TODO: Stop the actual test
+                        updateStatus(TestStatus.CANCELLED)
+                        updateNotification("Test cancelled")
+                        notifyProgress(IperfEvent.Error("Test cancelled by user", sessionId))
+                    }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "Error stopping test", e)
+                } finally {
+                    stopSelf()
                 }
-                stopSelf()
             }
+        } else {
+            Logger.w(TAG, "Attempted to stop test but no test is running (status: $currentStatus)")
         }
     }
     
@@ -248,16 +296,23 @@ class IperfTestService : Service() {
             ).apply {
                 acquire(10 * 60 * 1000L) // 10 minutes max
             }
+            Logger.d(TAG, "Wake lock acquired")
         } catch (e: Exception) {
-            // Wake lock acquisition failed, continue without it
+            Logger.w(TAG, "Failed to acquire wake lock", e)
         }
     }
     
     private fun releaseWakeLock() {
-        wakeLock?.let { wl ->
-            if (wl.isHeld) {
-                wl.release()
+        try {
+            wakeLock?.let { wl ->
+                if (wl.isHeld) {
+                    wl.release()
+                    Logger.d(TAG, "Wake lock released")
+                }
+                wakeLock = null
             }
+        } catch (e: Exception) {
+            Logger.w(TAG, "Error releasing wake lock", e)
             wakeLock = null
         }
     }

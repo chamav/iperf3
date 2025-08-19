@@ -2,6 +2,7 @@ package com.iperf3client.data.engine
 
 import android.content.Context
 import android.util.Log
+import com.iperf3client.data.utils.Logger
 import com.iperf3client.domain.model.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -38,10 +39,11 @@ class IperfEngineImpl(
         
         try {
             emit(IperfEvent.Started(sessionId))
-            Log.d(TAG, "Starting iperf3 test with params: $params")
+            Logger.i(TAG, "Starting iperf3 test with params: $params")
             
             // Validate parameters
             if (!params.isValid()) {
+                Logger.w(TAG, "Test failed: invalid parameters - $params")
                 emit(IperfEvent.Error("Invalid test parameters", sessionId))
                 return@flow
             }
@@ -53,6 +55,7 @@ class IperfEngineImpl(
             // Simulate test execution
             for (second in 1..params.durationSec) {
                 if (!isTestRunning) {
+                    Logger.i(TAG, "Test cancelled by user, sessionId: $sessionId")
                     emit(IperfEvent.Error("Test cancelled", sessionId))
                     return@flow
                 }
@@ -79,21 +82,31 @@ class IperfEngineImpl(
             )
             
             emit(IperfEvent.Completed(result))
-            Log.d(TAG, "Test completed successfully")
+            Logger.i(TAG, "Test completed successfully, sessionId: $sessionId, summary: ${summary.avgMbps} Mbps avg")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Test failed", e)
-            emit(IperfEvent.Error(e.message ?: "Unknown error", sessionId))
+            Logger.e(TAG, "Test failed with exception", e)
+            val errorMessage = when (e) {
+                is InterruptedException -> "Test was interrupted"
+                is java.io.IOException -> "Network error: ${e.message}"
+                is IllegalStateException -> "Invalid state: ${e.message}"
+                else -> "Unexpected error: ${e.message ?: e.javaClass.simpleName}"
+            }
+            emit(IperfEvent.Error(errorMessage, sessionId))
         } finally {
+            Logger.d(TAG, "Cleaning up test session: $sessionId")
             isTestRunning = false
             currentSessionId = null
         }
     }
     
     override suspend fun stop(sessionId: String) {
+        Logger.d(TAG, "Stop requested for session: $sessionId, current session: $currentSessionId")
         if (currentSessionId == sessionId) {
             isTestRunning = false
-            Log.d(TAG, "Stopping test session: $sessionId")
+            Logger.i(TAG, "Stopping test session: $sessionId")
+        } else {
+            Logger.w(TAG, "Attempted to stop session $sessionId, but current session is $currentSessionId")
         }
     }
     
@@ -175,7 +188,7 @@ class IperfEngineImpl(
             
             return logFile.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save log file", e)
+            Logger.e(TAG, "Failed to save raw log file for session $sessionId", e)
             return ""
         }
     }
@@ -220,7 +233,7 @@ class IperfEngineImpl(
             Log.d(TAG, "iperf3 binary extracted successfully")
             return true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract iperf3 binary", e)
+            Logger.e(TAG, "Failed to extract iperf3 binary from assets", e)
             return false
         }
     }

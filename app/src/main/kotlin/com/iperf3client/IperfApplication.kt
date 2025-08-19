@@ -10,6 +10,8 @@ import com.iperf3client.data.database.IperfDatabase
 import com.iperf3client.data.repository.HistoryRepositoryImpl
 import com.iperf3client.data.repository.ServersRepositoryImpl
 import com.iperf3client.data.repository.SettingsRepositoryImpl
+import com.iperf3client.data.utils.CrashHandler
+import com.iperf3client.data.utils.Logger
 import com.iperf3client.domain.repository.HistoryRepository
 import com.iperf3client.domain.repository.ServersRepository
 import com.iperf3client.domain.repository.SettingsRepository
@@ -40,6 +42,14 @@ class IperfApplication : Application() {
     
     override fun onCreate() {
         super.onCreate()
+        
+        // Инициализируем логирование
+        Logger.init(this)
+        Logger.i("Application", "IperfApplication started")
+        
+        // Устанавливаем обработчик для необработанных исключений
+        Thread.setDefaultUncaughtExceptionHandler(CrashHandler(this))
+        
         createNotificationChannels()
     }
     
