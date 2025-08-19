@@ -106,7 +106,8 @@ class IperfTestService : Service() {
                     }
                     
                     if (params != null) {
-                        Logger.i(TAG, "Starting test with params: $params")
+                        Logger.i(TAG, "Received START_TEST request for ${params.host}:${params.port} (${params.protocol})")
+                        Logger.d(TAG, "Test configuration: duration=${params.durationSec}s, streams=${params.parallelStreams}, reverse=${params.reverse}")
                         startTest(params)
                     } else {
                         Logger.e(TAG, "Received START_TEST intent but params are null")
@@ -146,7 +147,7 @@ class IperfTestService : Service() {
             return
         }
         
-        Logger.i(TAG, "Starting foreground test service")
+        Logger.i(TAG, "Starting foreground test service for target: ${params.host}:${params.port} (${params.protocol})")
         currentTestParams = params
         updateStatus(TestStatus.RUNNING)
         
@@ -166,6 +167,7 @@ class IperfTestService : Service() {
                         when (result) {
                             is com.iperf3client.domain.usecase.TestExecutionResult.Started -> {
                                 currentSessionId = result.sessionId
+                                Logger.i(TAG, "Test session started: ${result.sessionId} for ${params.host}:${params.port}")
                                 notifyProgress(IperfEvent.Started(result.sessionId))
                             }
                             is com.iperf3client.domain.usecase.TestExecutionResult.Progress -> {
@@ -174,12 +176,14 @@ class IperfTestService : Service() {
                             }
                             is com.iperf3client.domain.usecase.TestExecutionResult.Completed -> {
                                 updateStatus(TestStatus.COMPLETED)
+                                Logger.i(TAG, "Test completed for ${params.host}:${params.port} - avg: ${result.result.summary?.avgMbps} Mbps")
                                 updateNotification("Test completed")
                                 notifyProgress(IperfEvent.Completed(result.result))
                                 stopSelf()
                             }
                             is com.iperf3client.domain.usecase.TestExecutionResult.Error -> {
                                 updateStatus(TestStatus.ERROR)
+                                Logger.w(TAG, "Test failed for ${params.host}:${params.port}: ${result.message}")
                                 updateNotification("Test failed: ${result.message}")
                                 notifyProgress(IperfEvent.Error(result.message, currentSessionId))
                                 stopSelf()

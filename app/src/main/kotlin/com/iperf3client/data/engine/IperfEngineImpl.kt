@@ -39,7 +39,12 @@ class IperfEngineImpl(
         
         try {
             emit(IperfEvent.Started(sessionId))
-            Logger.i(TAG, "Starting iperf3 test with params: $params")
+            Logger.i(TAG, "Starting iperf3 client test session: $sessionId")
+            Logger.i(TAG, "Target: ${params.host}:${params.port} (${params.protocol})")
+            Logger.i(TAG, "Test parameters: duration=${params.durationSec}s, streams=${params.parallelStreams}, reverse=${params.reverse}")
+            if (params.protocol == Protocol.UDP && params.udpBitrateMbps != null) {
+                Logger.i(TAG, "UDP bitrate limit: ${params.udpBitrateMbps} Mbps")
+            }
             
             // Validate parameters
             if (!params.isValid()) {
@@ -82,7 +87,13 @@ class IperfEngineImpl(
             )
             
             emit(IperfEvent.Completed(result))
-            Logger.i(TAG, "Test completed successfully, sessionId: $sessionId, summary: ${summary.avgMbps} Mbps avg")
+            Logger.i(TAG, "Test completed successfully for ${params.host}:${params.port} (${params.protocol})")
+            Logger.i(TAG, "Session $sessionId results: avg=${summary.avgMbps} Mbps, max=${summary.maxMbps} Mbps, min=${summary.minMbps} Mbps")
+            if (params.protocol == Protocol.UDP) {
+                Logger.i(TAG, "UDP test stats - jitter=${summary.jitterMs} ms, packet_loss=${summary.packetLossPct}%")
+            } else {
+                Logger.i(TAG, "TCP test stats - retransmits=${summary.retransmits}")
+            }
             
         } catch (e: Exception) {
             Logger.e(TAG, "Test failed with exception", e)

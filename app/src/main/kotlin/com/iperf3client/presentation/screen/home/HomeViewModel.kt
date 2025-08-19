@@ -198,7 +198,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         
-        Logger.i(TAG, "Starting test with parameters: ${uiState.testParams}")
+        val params = uiState.testParams
+        Logger.i(TAG, "Starting iperf3 test: host=${params.host}, port=${params.port}, protocol=${params.protocol}, duration=${params.durationSec}s, streams=${params.parallelStreams}, reverse=${params.reverse}")
+        Logger.d(TAG, "Full test parameters: $params")
         
         // Save host to recent hosts
         viewModelScope.launch {
