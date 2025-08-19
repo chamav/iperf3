@@ -100,7 +100,7 @@ class ExportHistoryUseCase(
             val jsonFile = File(exportDir, "iperf3_results_$timestamp.json")
             
             val exportData = ExportData(
-                exportedAt = Date(),
+                exportedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
                 version = "1.0",
                 testCount = tests.size,
                 tests = tests
@@ -190,7 +190,7 @@ class ExportHistoryUseCase(
     
     @kotlinx.serialization.Serializable
     data class ExportData(
-        val exportedAt: Date,
+        val exportedAt: String, // Изменили Date на String для простоты
         val version: String,
         val testCount: Int,
         val tests: List<TestResult>

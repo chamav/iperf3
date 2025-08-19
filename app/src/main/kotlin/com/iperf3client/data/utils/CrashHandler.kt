@@ -10,23 +10,28 @@ class CrashHandler(private val context: Context) : Thread.UncaughtExceptionHandl
     
     override fun uncaughtException(thread: Thread, exception: Throwable) {
         // Отправляем краш-репорт в Sentry немедленно
-        Sentry.captureException(exception) { scope ->
-            scope.setTag("thread", thread.name)
-            scope.setTag("crash_type", "uncaught_exception")
-            scope.level = io.sentry.SentryLevel.FATAL
-            scope.setExtra("thread_id", thread.id.toString())
-            scope.setExtra("thread_state", thread.state.name)
-            scope.setExtra("thread_isAlive", thread.isAlive.toString())
-            scope.setExtra("thread_isDaemon", thread.isDaemon.toString())
+        try {
+            if (Sentry.isEnabled()) {
+                Sentry.captureException(exception) { scope ->
+                    scope.setTag("thread", thread.name)
+                    scope.setTag("crash_type", "uncaught_exception")
+                    scope.level = io.sentry.SentryLevel.FATAL
+                    scope.setExtra("thread_id", thread.id.toString())
+                    scope.setExtra("thread_state", thread.state.name)
+                    scope.setExtra("thread_isAlive", thread.isAlive.toString())
+                    scope.setExtra("thread_isDaemon", thread.isDaemon.toString())
+                }
+                // Принудительно отправляем все pending события в Sentry
+                Sentry.flush(2000) // ждем до 2 секунд
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CrashHandler", "Failed to send crash to Sentry", e)
         }
         
         Logger.crash("CrashHandler", "Uncaught exception in thread: ${thread.name}", exception)
         
         // Сохраняем детали краша локально как backup
         saveCrashDetails(thread, exception)
-        
-        // Принудительно отправляем все pending события в Sentry
-        Sentry.flush(2000) // ждем до 2 секунд
         
         // Вызываем стандартный обработчик если он есть
         defaultHandler?.uncaughtException(thread, exception)

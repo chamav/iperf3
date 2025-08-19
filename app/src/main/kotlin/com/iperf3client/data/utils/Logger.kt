@@ -34,8 +34,12 @@ object Logger {
         Log.d("$TAG:$tag", message)
         writeToFile("D", tag, message)
         // Отправляем debug логи в Sentry только в development окружении
-        if (isDebugMode()) {
-            Sentry.addBreadcrumb("[$tag] $message", "debug")
+        if (isDebugMode() && isSentryInitialized()) {
+            try {
+                Sentry.addBreadcrumb("[$tag] $message", "debug")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send debug breadcrumb to Sentry", e)
+            }
         }
     }
     
@@ -43,8 +47,12 @@ object Logger {
         Log.i("$TAG:$tag", message)
         writeToFile("I", tag, message)
         // Отправляем важные info сообщения как breadcrumbs
-        if (sentryEnabled) {
-            Sentry.addBreadcrumb("[$tag] $message", "info")
+        if (sentryEnabled && isSentryInitialized()) {
+            try {
+                Sentry.addBreadcrumb("[$tag] $message", "info")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send breadcrumb to Sentry", e)
+            }
         }
     }
     
@@ -52,9 +60,13 @@ object Logger {
         Log.w("$TAG:$tag", message, throwable)
         writeToFile("W", tag, message, throwable)
         // Отправляем предупреждения в Sentry
-        if (sentryEnabled) {
-            Sentry.captureMessage("[$tag] $message", SentryLevel.WARNING)
-            throwable?.let { Sentry.captureException(it) }
+        if (sentryEnabled && isSentryInitialized()) {
+            try {
+                Sentry.captureMessage("[$tag] $message", SentryLevel.WARNING)
+                throwable?.let { Sentry.captureException(it) }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send warning to Sentry", e)
+            }
         }
     }
     
@@ -62,9 +74,13 @@ object Logger {
         Log.e("$TAG:$tag", message, throwable)
         writeToFile("E", tag, message, throwable)
         // Отправляем ошибки в Sentry
-        if (sentryEnabled) {
-            Sentry.captureMessage("[$tag] $message", SentryLevel.ERROR)
-            throwable?.let { Sentry.captureException(it) }
+        if (sentryEnabled && isSentryInitialized()) {
+            try {
+                Sentry.captureMessage("[$tag] $message", SentryLevel.ERROR)
+                throwable?.let { Sentry.captureException(it) }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send error to Sentry", e)
+            }
         }
     }
     
@@ -72,9 +88,15 @@ object Logger {
         Log.wtf("$TAG:$tag", message, throwable)
         writeToFile("CRASH", tag, message, throwable)
         
-        // Отправляем критические ошибки в Sentry (всегда, независимо от настройки)
-        Sentry.captureMessage("CRASH [$tag] $message", SentryLevel.FATAL)
-        Sentry.captureException(throwable)
+        // Отправляем критические ошибки в Sentry (всегда, независимо от настройки пользователя)
+        if (isSentryInitialized()) {
+            try {
+                Sentry.captureMessage("CRASH [$tag] $message", SentryLevel.FATAL)
+                Sentry.captureException(throwable)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send crash to Sentry", e)
+            }
+        }
         
         // Дополнительные действия при критических ошибках
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
@@ -125,5 +147,13 @@ object Logger {
         // Простая проверка - всегда включаем debug breadcrumbs в debug сборке
         // В production сборке это будет false (minifyEnabled)
         return android.util.Log.isLoggable(TAG, android.util.Log.DEBUG)
+    }
+    
+    private fun isSentryInitialized(): Boolean {
+        return try {
+            Sentry.isEnabled()
+        } catch (e: Exception) {
+            false
+        }
     }
 }

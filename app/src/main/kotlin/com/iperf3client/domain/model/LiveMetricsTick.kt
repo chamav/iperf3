@@ -2,8 +2,10 @@ package com.iperf3client.domain.model
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import kotlinx.serialization.Serializable
 
 @Parcelize
+@Serializable
 data class LiveMetricsTick(
     val second: Int,
     val throughputMbps: Float,

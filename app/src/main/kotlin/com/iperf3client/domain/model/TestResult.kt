@@ -2,15 +2,18 @@ package com.iperf3client.domain.model
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import java.time.Instant
 
 @Parcelize
+@Serializable
 data class TestResult(
     val id: Long = 0,
-    val startedAt: Instant,
-    val finishedAt: Instant?,
+    @Transient val startedAt: Instant = Instant.now(),
+    @Transient val finishedAt: Instant? = null,
     val params: TestParams,
-    val summary: TestSummary?,
+    val summary: TestSummary? = null,
     val timeline: List<LiveMetricsTick> = emptyList(),
     val rawLogPath: String? = null,
     val status: TestStatus = TestStatus.RUNNING,
@@ -28,6 +31,7 @@ data class TestResult(
 }
 
 @Parcelize
+@Serializable
 data class TestSummary(
     val avgMbps: Float,
     val maxMbps: Float,
@@ -39,6 +43,7 @@ data class TestSummary(
     val totalBytes: Long? = null
 ) : Parcelable
 
+@Serializable
 enum class TestStatus {
     IDLE,
     RUNNING,

@@ -99,6 +99,13 @@
         <meta-data
             android:name="android.allow_multiple_resumed_activities"
             android:value="true" />
+            
+        <!-- Отключаем автоматическую инициализацию Sentry -->
+        <provider
+            android:name="io.sentry.android.core.SentryInitProvider"
+            android:authorities="${applicationId}.sentry.SentryInitProvider"
+            android:enabled="false"
+            tools:node="remove" />
     </application>
 
 </manifest>

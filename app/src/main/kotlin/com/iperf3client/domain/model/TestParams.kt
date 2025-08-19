@@ -2,8 +2,10 @@ package com.iperf3client.domain.model
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import kotlinx.serialization.Serializable
 
 @Parcelize
+@Serializable
 data class TestParams(
     val host: String,
     val port: Int = 5201,
@@ -55,6 +57,7 @@ data class TestParams(
     }
 }
 
+@Serializable
 enum class Protocol {
     TCP, UDP
 }

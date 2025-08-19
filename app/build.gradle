@@ -3,6 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'kotlin-kapt'
     id 'kotlin-parcelize'
+    id 'org.jetbrains.kotlin.plugin.serialization'
 }
 
 // Читаем local.properties для секретных конфигов
@@ -144,6 +145,9 @@ dependencies {
     
     // Sentry для централизованного сбора ошибок и логов
     implementation 'io.sentry:sentry-android:7.1.0'
+    
+    // HTTP сервер для просмотра логов через WiFi
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
     
     // Testing
     testImplementation 'junit:junit:4.13.2'
