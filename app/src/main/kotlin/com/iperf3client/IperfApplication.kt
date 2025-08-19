@@ -12,9 +12,11 @@ import com.iperf3client.data.repository.ServersRepositoryImpl
 import com.iperf3client.data.repository.SettingsRepositoryImpl
 import com.iperf3client.data.utils.CrashHandler
 import com.iperf3client.data.utils.Logger
+import com.iperf3client.BuildConfig
 import com.iperf3client.domain.repository.HistoryRepository
 import com.iperf3client.domain.repository.ServersRepository
 import com.iperf3client.domain.repository.SettingsRepository
+import io.sentry.android.core.SentryAndroid
 
 class IperfApplication : Application() {
     
@@ -42,6 +44,19 @@ class IperfApplication : Application() {
     
     override fun onCreate() {
         super.onCreate()
+        
+        // Инициализируем Sentry для сбора ошибок и логов
+        SentryAndroid.init(this) { options ->
+            options.dsn = BuildConfig.SENTRY_DSN
+            // Определяем режим отладки через ApplicationInfo
+            val isDebug = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            options.isDebug = isDebug
+            // Настройки для production
+            options.environment = if (isDebug) "development" else "production"
+            options.release = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+            // Включаем автоматический сбор производительности
+            options.tracesSampleRate = if (isDebug) 1.0 else 0.1
+        }
         
         // Инициализируем логирование
         Logger.init(this)

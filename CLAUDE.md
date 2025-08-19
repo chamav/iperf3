@@ -180,6 +180,25 @@ adb pull /data/data/com.iperf3client/files/logs/ ./logs/
 - `CrashHandler` - обработчик критических ошибок
 - `Logger` - система логирования
 
+## Sentry интеграция
+
+### Настройка
+1. Скопируйте `local.properties.example` в `local.properties`
+2. Заполните ваш Sentry DSN в поле `sentry.dsn`
+3. Файл `local.properties` уже добавлен в `.gitignore` и не попадет в репозиторий
+
+### Конфигурация
+- **DSN хранится**: в `local.properties` (локально, не коммитится)
+- **Передается**: через `BuildConfig.SENTRY_DSN`  
+- **Логи по умолчанию**: включены для тестирования
+- **Отправка**: info/warning/error/crash в Sentry + breadcrumbs
+
+### Изменение настроек по умолчанию
+Для production измените в `SettingsRepositoryImpl.kt`:
+```kotlin
+private const val DEFAULT_SENTRY_ENABLED = false
+```
+
 ## Статус MVP
 ✅ **MVP готов к сборке APK**
 - Все основные экраны реализованы
@@ -188,3 +207,4 @@ adb pull /data/data/com.iperf3client/files/logs/ ./logs/
 - Поддержка складных устройств
 - Локализация настроена
 - Система логирования и обработки ошибок настроена
+- Sentry интеграция для централизованного мониторинга

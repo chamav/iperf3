@@ -24,6 +24,7 @@ class SettingsRepositoryImpl(
         
         // Privacy settings
         private val COLLECT_DIAGNOSTICS_KEY = booleanPreferencesKey("collect_diagnostics")
+        private val SENTRY_ENABLED_KEY = booleanPreferencesKey("sentry_enabled")
         
         // Display settings
         private val DISPLAY_UNITS_KEY = stringPreferencesKey("display_units")
@@ -54,6 +55,7 @@ class SettingsRepositoryImpl(
         private const val DEFAULT_WIFI_ONLY = false
         private const val DEFAULT_FOREGROUND_SERVICE_ONLY = true
         private const val DEFAULT_COLLECT_DIAGNOSTICS = false
+        private const val DEFAULT_SENTRY_ENABLED = true
         private const val DEFAULT_DISPLAY_UNITS = "Mbps"
         private const val DEFAULT_THEME = "system"
         private const val DEFAULT_RETENTION_DAYS = 30
@@ -128,6 +130,18 @@ class SettingsRepositoryImpl(
     override suspend fun setCollectDiagnostics(collect: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[COLLECT_DIAGNOSTICS_KEY] = collect
+        }
+    }
+    
+    override fun getSentryEnabled(): Flow<Boolean> {
+        return context.dataStore.data.map { preferences ->
+            preferences[SENTRY_ENABLED_KEY] ?: DEFAULT_SENTRY_ENABLED
+        }
+    }
+    
+    override suspend fun setSentryEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SENTRY_ENABLED_KEY] = enabled
         }
     }
     

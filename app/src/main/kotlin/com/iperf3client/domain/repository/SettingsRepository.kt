@@ -22,6 +22,9 @@ interface SettingsRepository {
     fun getCollectDiagnostics(): Flow<Boolean>
     suspend fun setCollectDiagnostics(collect: Boolean)
     
+    fun getSentryEnabled(): Flow<Boolean>
+    suspend fun setSentryEnabled(enabled: Boolean)
+    
     // Units and display
     fun getDisplayUnits(): Flow<String>
     suspend fun setDisplayUnits(units: String)

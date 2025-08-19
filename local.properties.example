@@ -1,0 +1,8 @@
+# local.properties.example
+# Copy this file to local.properties and fill in your actual values
+
+sdk.dir=/path/to/your/android-sdk
+
+# Sentry configuration (keep this secret!)
+# Get your DSN from https://sentry.io/settings/YOUR_PROJECT/keys/
+sentry.dsn=https://YOUR_DSN@sentry.twin24.ai/PROJECT_ID

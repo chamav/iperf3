@@ -5,6 +5,13 @@ plugins {
     id 'kotlin-parcelize'
 }
 
+// Читаем local.properties для секретных конфигов
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+
 android {
     namespace 'com.iperf3client'
     compileSdk 34
@@ -23,6 +30,10 @@ android {
         }
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Добавляем Sentry DSN в BuildConfig из local.properties
+        def sentryDsn = localProperties.getProperty('sentry.dsn') ?: '""'
+        buildConfigField "String", "SENTRY_DSN", "\"${sentryDsn}\""
         
         vectorDrawables {
             useSupportLibrary true
@@ -54,6 +65,7 @@ android {
     buildFeatures {
         compose true
         viewBinding true
+        buildConfig true
     }
     
     composeOptions {
@@ -129,6 +141,9 @@ dependencies {
     
     // Preferences DataStore
     implementation 'androidx.datastore:datastore-preferences:1.0.0'
+    
+    // Sentry для централизованного сбора ошибок и логов
+    implementation 'io.sentry:sentry-android:7.1.0'
     
     // Testing
     testImplementation 'junit:junit:4.13.2'

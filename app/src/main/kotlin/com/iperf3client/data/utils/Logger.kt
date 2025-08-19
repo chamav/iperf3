@@ -2,6 +2,8 @@ package com.iperf3client.data.utils
 
 import android.content.Context
 import android.util.Log
+import io.sentry.Sentry
+import io.sentry.SentryLevel
 import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -14,6 +16,7 @@ object Logger {
     private const val LOG_FILE_NAME = "iperf_client.log"
     private var logFile: File? = null
     private var isInitialized = false
+    private var sentryEnabled = true
     
     fun init(context: Context) {
         if (!isInitialized) {
@@ -30,31 +33,52 @@ object Logger {
     fun d(tag: String, message: String) {
         Log.d("$TAG:$tag", message)
         writeToFile("D", tag, message)
+        // Отправляем debug логи в Sentry только в development окружении
+        if (isDebugMode()) {
+            Sentry.addBreadcrumb("[$tag] $message", "debug")
+        }
     }
     
     fun i(tag: String, message: String) {
         Log.i("$TAG:$tag", message)
         writeToFile("I", tag, message)
+        // Отправляем важные info сообщения как breadcrumbs
+        if (sentryEnabled) {
+            Sentry.addBreadcrumb("[$tag] $message", "info")
+        }
     }
     
     fun w(tag: String, message: String, throwable: Throwable? = null) {
         Log.w("$TAG:$tag", message, throwable)
         writeToFile("W", tag, message, throwable)
+        // Отправляем предупреждения в Sentry
+        if (sentryEnabled) {
+            Sentry.captureMessage("[$tag] $message", SentryLevel.WARNING)
+            throwable?.let { Sentry.captureException(it) }
+        }
     }
     
     fun e(tag: String, message: String, throwable: Throwable? = null) {
         Log.e("$TAG:$tag", message, throwable)
         writeToFile("E", tag, message, throwable)
+        // Отправляем ошибки в Sentry
+        if (sentryEnabled) {
+            Sentry.captureMessage("[$tag] $message", SentryLevel.ERROR)
+            throwable?.let { Sentry.captureException(it) }
+        }
     }
     
     fun crash(tag: String, message: String, throwable: Throwable) {
         Log.wtf("$TAG:$tag", message, throwable)
         writeToFile("CRASH", tag, message, throwable)
         
+        // Отправляем критические ошибки в Sentry (всегда, независимо от настройки)
+        Sentry.captureMessage("CRASH [$tag] $message", SentryLevel.FATAL)
+        Sentry.captureException(throwable)
+        
         // Дополнительные действия при критических ошибках
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             e("UncaughtException", "Uncaught exception in thread ${thread.name}", exception)
-            // Здесь можно добавить отправку краш-репорта
         }
     }
     
@@ -90,5 +114,16 @@ object Logger {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear log file", e)
         }
+    }
+    
+    fun setSentryEnabled(enabled: Boolean) {
+        sentryEnabled = enabled
+        d("Logger", "Sentry logging enabled: $enabled")
+    }
+    
+    private fun isDebugMode(): Boolean {
+        // Простая проверка - всегда включаем debug breadcrumbs в debug сборке
+        // В production сборке это будет false (minifyEnabled)
+        return android.util.Log.isLoggable(TAG, android.util.Log.DEBUG)
     }
 }
