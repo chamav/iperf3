@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Include test results and settings -->
+    <include domain="database" path="iperf_database"/>
+    <include domain="sharedpref" path="user_preferences"/>
+    
+    <!-- Exclude temporary files and logs -->
+    <exclude domain="file" path="logs/"/>
+    <exclude domain="file" path="temp/"/>
+    <exclude domain="cache"/>
+</full-backup-content>

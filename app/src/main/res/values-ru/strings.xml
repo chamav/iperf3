@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App Info -->
+    <string name="app_name">iperf3 Client</string>
+    <string name="app_description">Инструмент тестирования производительности сети</string>
+    
+    <!-- Navigation -->
+    <string name="nav_home">Главная</string>
+    <string name="nav_servers">Серверы</string>
+    <string name="nav_history">История</string>
+    <string name="nav_settings">Настройки</string>
+    <string name="nav_about">О программе</string>
+    
+    <!-- Home Screen -->
+    <string name="test_configuration">Настройка теста</string>
+    <string name="server_host">Хост сервера</string>
+    <string name="server_port">Порт</string>
+    <string name="protocol">Протокол</string>
+    <string name="protocol_tcp">TCP</string>
+    <string name="protocol_udp">UDP</string>
+    <string name="duration">Длительность (секунды)</string>
+    <string name="parallel_streams">Параллельные потоки</string>
+    <string name="reverse_mode">Обратный режим</string>
+    <string name="udp_bitrate">UDP битрейт (Мбит/с)</string>
+    <string name="wifi_only">Только Wi-Fi</string>
+    <string name="start_test">Начать тест</string>
+    <string name="stop_test">Остановить тест</string>
+    
+    <!-- Test Status -->
+    <string name="status_idle">Готов</string>
+    <string name="status_running">Выполняется</string>
+    <string name="status_completed">Завершён</string>
+    <string name="status_error">Ошибка</string>
+    <string name="status_cancelled">Отменён</string>
+    
+    <!-- Results -->
+    <string name="current_speed">Текущая: %1$.2f Мбит/с</string>
+    <string name="average_speed">Средняя: %1$.2f Мбит/с</string>
+    <string name="max_speed">Макс: %1$.2f Мбит/с</string>
+    <string name="min_speed">Мин: %1$.2f Мбит/с</string>
+    <string name="jitter">Джиттер: %1$.2f мс</string>
+    <string name="packet_loss">Потери: %1$.2f%%</string>
+    <string name="retransmits">Повторы: %1$d</string>
+    
+    <!-- Servers -->
+    <string name="add_server">Добавить сервер</string>
+    <string name="edit_server">Редактировать сервер</string>
+    <string name="server_name">Имя сервера</string>
+    <string name="server_address">Адрес</string>
+    <string name="default_protocol">Протокол по умолчанию</string>
+    <string name="notes">Заметки</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+    <string name="delete">Удалить</string>
+    <string name="set_default">Установить по умолчанию</string>
+    
+    <!-- History -->
+    <string name="no_tests">Тесты ещё не проводились</string>
+    <string name="test_details">Детали теста</string>
+    <string name="export_csv">Экспорт CSV</string>
+    <string name="export_json">Экспорт JSON</string>
+    <string name="share">Поделиться</string>
+    <string name="delete_test">Удалить тест</string>
+    <string name="search_history">Поиск в истории…</string>
+    <string name="filter_by_protocol">Фильтр по протоколу</string>
+    <string name="filter_by_date">Фильтр по дате</string>
+    
+    <!-- Settings -->
+    <string name="general_settings">Общие</string>
+    <string name="max_duration">Макс. длительность (секунды)</string>
+    <string name="max_streams">Макс. параллельные потоки</string>
+    <string name="units">Единицы отображения</string>
+    <string name="background_tests">Фоновые тесты</string>
+    <string name="foreground_service_only">Только служба переднего плана</string>
+    <string name="privacy_settings">Конфиденциальность</string>
+    <string name="collect_diagnostics">Собирать анонимную диагностику</string>
+    <string name="diagnostics_description">Помочь улучшить приложение, делясь анонимными данными использования</string>
+    <string name="storage_settings">Хранилище</string>
+    <string name="clear_history">Очистить историю</string>
+    <string name="clear_logs">Очистить логи</string>
+    <string name="clear_cache">Очистить кэш</string>
+    
+    <!-- About -->
+    <string name="version">Версия %1$s</string>
+    <string name="licenses">Лицензии</string>
+    <string name="iperf3_license">Лицензия iperf3 (BSD)</string>
+    <string name="privacy_policy">Политика конфиденциальности</string>
+    <string name="traffic_warning">Предупреждение о трафике</string>
+    <string name="traffic_warning_text">Это приложение выполняет тесты производительности сети, которые могут потреблять значительное количество данных. Пожалуйста, учитывайте ограничения вашего тарифного плана при использовании мобильных данных.</string>
+    <string name="share_logs">Поделиться логами</string>
+    
+    <!-- Errors -->
+    <string name="error_invalid_host">Неверный адрес хоста</string>
+    <string name="error_invalid_port">Неверный номер порта</string>
+    <string name="error_network_unavailable">Сеть недоступна</string>
+    <string name="error_wifi_required">Требуется подключение Wi-Fi</string>
+    <string name="error_connection_failed">Ошибка подключения</string>
+    <string name="error_test_timeout">Превышено время ожидания теста</string>
+    <string name="error_permission_denied">Доступ запрещён</string>
+    <string name="error_storage_access">Ошибка доступа к хранилищу</string>
+    
+    <!-- Dialogs -->
+    <string name="confirm_delete">Подтвердить удаление</string>
+    <string name="delete_server_message">Вы уверены, что хотите удалить этот сервер?</string>
+    <string name="delete_test_message">Вы уверены, что хотите удалить результат этого теста?</string>
+    <string name="clear_history_message">Вы уверены, что хотите очистить всю историю тестов?</string>
+    <string name="yes">Да</string>
+    <string name="no">Нет</string>
+    <string name="ok">ОК</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_name">iperf3 тесты</string>
+    <string name="notification_channel_description">Уведомления о тестах производительности сети</string>
+    <string name="notification_test_running">Выполняется тест сети…</string>
+    <string name="notification_test_completed">Тест завершён</string>
+    
+    <!-- Accessibility -->
+    <string name="accessibility_start_test">Запустить тест производительности сети</string>
+    <string name="accessibility_stop_test">Остановить выполняющийся тест</string>
+    <string name="accessibility_test_progress">Прогресс теста: прошло %1$d секунд</string>
+    
+    <!-- Onboarding -->
+    <string name="welcome_title">Добро пожаловать в iperf3 Client</string>
+    <string name="welcome_message">Это приложение поможет вам измерить производительность сети с помощью протокола iperf3.</string>
+    <string name="responsibility_title">Ваша ответственность</string>
+    <string name="responsibility_message">Пожалуйста, помните, что сетевые тесты могут потреблять значительное количество данных и создавать нагрузку на целевые серверы. Используйте ответственно и тестируйте только серверы, на доступ к которым у вас есть разрешение.</string>
+    <string name="permissions_title">Разрешения</string>
+    <string name="permissions_message">Это приложение может запросить разрешения на доступ к сети и местоположению для предоставления точной информации о Wi-Fi и запуска фоновых тестов.</string>
+    <string name="get_started">Начать работу</string>
+</resources>
