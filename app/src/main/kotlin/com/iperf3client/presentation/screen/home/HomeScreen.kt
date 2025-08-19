@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.iperf3client.R
 import com.iperf3client.domain.model.Protocol
 import com.iperf3client.domain.model.TestStatus
+import com.iperf3client.presentation.component.RecentHostsDropdown
 import com.iperf3client.presentation.component.ServerSelector
 import com.iperf3client.presentation.component.TestProgressCard
 import com.iperf3client.presentation.component.TestResultCard
@@ -46,6 +47,7 @@ fun HomeScreen(
             testParams = uiState.testParams,
             isTestRunning = uiState.isTestRunning,
             availableServers = uiState.availableServers,
+            recentHosts = uiState.recentHosts,
             onHostChange = viewModel::onHostChange,
             onPortChange = viewModel::onPortChange,
             onProtocolChange = viewModel::onProtocolChange,
@@ -54,7 +56,8 @@ fun HomeScreen(
             onReverseChange = viewModel::onReverseChange,
             onUdpBitrateChange = viewModel::onUdpBitrateChange,
             onWifiOnlyChange = viewModel::onWifiOnlyChange,
-            onServerSelected = viewModel::onServerSelected
+            onServerSelected = viewModel::onServerSelected,
+            onClearRecentHosts = viewModel::clearRecentHosts
         )
         
         // Control Buttons
@@ -106,6 +109,7 @@ private fun TestConfigurationCard(
     testParams: com.iperf3client.domain.model.TestParams,
     isTestRunning: Boolean,
     availableServers: List<com.iperf3client.domain.model.ServerItem>,
+    recentHosts: List<com.iperf3client.domain.model.RecentHost>,
     onHostChange: (String) -> Unit,
     onPortChange: (String) -> Unit,
     onProtocolChange: (Protocol) -> Unit,
@@ -114,7 +118,8 @@ private fun TestConfigurationCard(
     onReverseChange: (Boolean) -> Unit,
     onUdpBitrateChange: (String) -> Unit,
     onWifiOnlyChange: (Boolean) -> Unit,
-    onServerSelected: (com.iperf3client.domain.model.ServerItem) -> Unit
+    onServerSelected: (com.iperf3client.domain.model.ServerItem) -> Unit,
+    onClearRecentHosts: () -> Unit
 ) {
     Card {
         Column(
@@ -134,6 +139,16 @@ private fun TestConfigurationCard(
                 ServerSelector(
                     servers = availableServers,
                     onServerSelected = onServerSelected,
+                    enabled = !isTestRunning
+                )
+            }
+            
+            // Recent Hosts Dropdown
+            if (recentHosts.isNotEmpty()) {
+                RecentHostsDropdown(
+                    recentHosts = recentHosts,
+                    onHostSelected = onHostChange,
+                    onClearRecentHosts = onClearRecentHosts,
                     enabled = !isTestRunning
                 )
             }

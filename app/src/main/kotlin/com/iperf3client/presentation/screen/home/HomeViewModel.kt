@@ -10,9 +10,11 @@ import com.iperf3client.IperfApplication
 import com.iperf3client.data.engine.IperfEngineImpl
 import com.iperf3client.data.utils.Logger
 import com.iperf3client.domain.model.*
+import com.iperf3client.domain.repository.RecentHostsRepository
 import com.iperf3client.domain.usecase.ManageServersUseCase
 import com.iperf3client.domain.usecase.RunTestUseCase
 import com.iperf3client.domain.usecase.TestExecutionResult
+import com.iperf3client.data.repository.RecentHostsRepositoryImpl
 import com.iperf3client.service.IperfTestService
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -33,6 +35,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val manageServersUseCase = ManageServersUseCase(
         serversRepository = app.serversRepository
     )
+    
+    private val recentHostsRepository: RecentHostsRepository = RecentHostsRepositoryImpl(application)
     
     var uiState by mutableStateOf(HomeUiState())
         private set
@@ -85,6 +89,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }.launchIn(viewModelScope)
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to observe servers", e)
+        }
+        
+        // Observe recent hosts
+        try {
+            recentHostsRepository.getRecentHosts().onEach { recentHosts ->
+                Logger.d(TAG, "Recent hosts updated: ${recentHosts.size} hosts available")
+                uiState = uiState.copy(recentHosts = recentHosts)
+            }.launchIn(viewModelScope)
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to observe recent hosts", e)
         }
     }
     
@@ -185,6 +199,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         Logger.i(TAG, "Starting test with parameters: ${uiState.testParams}")
+        
+        // Save host to recent hosts
+        viewModelScope.launch {
+            try {
+                recentHostsRepository.addHost(uiState.testParams.host)
+                Logger.d(TAG, "Host added to recent hosts: ${uiState.testParams.host}")
+            } catch (e: Exception) {
+                Logger.w(TAG, "Failed to save host to recent hosts", e)
+            }
+        }
         
         uiState = uiState.copy(
             testStatus = TestStatus.RUNNING,
@@ -307,6 +331,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             validationError = null
         )
     }
+    
+    fun clearRecentHosts() {
+        viewModelScope.launch {
+            try {
+                recentHostsRepository.clearRecentHosts()
+                Logger.d(TAG, "Recent hosts cleared")
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to clear recent hosts", e)
+            }
+        }
+    }
 }
 
 data class HomeUiState(
@@ -327,6 +362,7 @@ data class HomeUiState(
     val currentSessionId: String? = null,
     val logs: List<String> = emptyList(),
     val availableServers: List<ServerItem> = emptyList(),
+    val recentHosts: List<RecentHost> = emptyList(),
     val validationError: String? = null
 ) {
     val isTestRunning: Boolean
