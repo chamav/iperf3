@@ -275,12 +275,14 @@ private fun SettingsProtocolSelector(
         Spacer(modifier = Modifier.height(8.dp))
         
         Row {
+            @OptIn(ExperimentalMaterial3Api::class)
             FilterChip(
                 selected = selectedProtocol == Protocol.TCP,
                 onClick = { onProtocolSelected(Protocol.TCP) },
                 label = { Text("TCP") }
             )
             Spacer(modifier = Modifier.width(8.dp))
+            @OptIn(ExperimentalMaterial3Api::class)
             FilterChip(
                 selected = selectedProtocol == Protocol.UDP,
                 onClick = { onProtocolSelected(Protocol.UDP) },

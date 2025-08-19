@@ -173,6 +173,7 @@ private fun TestConfigurationCard(
                 )
                 
                 Row {
+                    @OptIn(ExperimentalMaterial3Api::class)
                     FilterChip(
                         selected = testParams.protocol == Protocol.TCP,
                         onClick = { onProtocolChange(Protocol.TCP) },
@@ -180,6 +181,7 @@ private fun TestConfigurationCard(
                         enabled = !isTestRunning
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    @OptIn(ExperimentalMaterial3Api::class)
                     FilterChip(
                         selected = testParams.protocol == Protocol.UDP,
                         onClick = { onProtocolChange(Protocol.UDP) },

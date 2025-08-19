@@ -1,6 +1,7 @@
 package com.iperf3client.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.PrimaryKey
 import com.iperf3client.domain.model.*
 import kotlinx.serialization.encodeToString
@@ -21,6 +22,7 @@ data class TestResultEntity(
     val errorMessage: String?
 ) {
     
+    @Ignore
     private val json = Json { ignoreUnknownKeys = true }
     
     fun toDomain(): TestResult {

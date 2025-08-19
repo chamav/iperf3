@@ -225,12 +225,14 @@ private fun FilterPanel(
                 )
                 
                 Row {
+                    @OptIn(ExperimentalMaterial3Api::class)
                     FilterChip(
                         selected = protocolFilter == null,
                         onClick = { onProtocolFilterChange(null) },
                         label = { Text("All") }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    @OptIn(ExperimentalMaterial3Api::class)
                     FilterChip(
                         selected = protocolFilter == Protocol.TCP,
                         onClick = { 
@@ -241,6 +243,7 @@ private fun FilterPanel(
                         label = { Text("TCP") }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    @OptIn(ExperimentalMaterial3Api::class)
                     FilterChip(
                         selected = protocolFilter == Protocol.UDP,
                         onClick = { 

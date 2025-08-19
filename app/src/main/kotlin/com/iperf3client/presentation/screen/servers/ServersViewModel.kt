@@ -118,7 +118,13 @@ class ServersViewModel(application: Application) : AndroidViewModel(application)
                 if (uiState.editingServer != null) {
                     manageServersUseCase.updateServer(server)
                 } else {
-                    manageServersUseCase.addServer(server)
+                    manageServersUseCase.addServer(
+                        name = form.name,
+                        host = form.host,
+                        port = port,
+                        defaultProtocol = form.protocol,
+                        note = form.note.takeIf { it.isNotBlank() }
+                    )
                 }
                 hideAddServerDialog()
             } catch (e: Exception) {
@@ -140,7 +146,7 @@ class ServersViewModel(application: Application) : AndroidViewModel(application)
     fun setDefaultServer(server: ServerItem) {
         viewModelScope.launch {
             try {
-                manageServersUseCase.setDefaultServer(server)
+                manageServersUseCase.setDefaultServer(server.id)
             } catch (e: Exception) {
                 uiState = uiState.copy(validationError = e.message ?: "Failed to set default server")
             }

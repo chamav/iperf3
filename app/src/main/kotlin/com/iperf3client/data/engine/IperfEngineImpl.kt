@@ -109,21 +109,21 @@ class IperfEngineImpl(
         }
         
         // Add some variance based on time
-        val variance = Math.sin(second * 0.5) * 50
+        val variance = Math.sin(second * 0.5).toFloat() * 50
         val speed = (baseSpeed + variance).coerceAtLeast(1f)
         
         return when (protocol) {
             Protocol.TCP -> LiveMetricsTick(
                 second = second,
-                throughputMbps = speed,
+                throughputMbps = speed.toFloat(),
                 retransmits = if (Random.nextFloat() < 0.1) Random.nextInt(0, 5) else null,
-                rttMs = Random.nextFloat() * 50 + 10 // 10-60ms RTT
+                rttMs = (Random.nextFloat() * 50 + 10).toFloat() // 10-60ms RTT
             )
             Protocol.UDP -> LiveMetricsTick(
                 second = second,
-                throughputMbps = speed,
+                throughputMbps = speed.toFloat(),
                 jitterMs = Random.nextFloat() * 5 + 0.1f, // 0.1-5.1ms jitter
-                packetLossPct = Random.nextFloat() * 2f // 0-2% packet loss
+                packetLossPct = (Random.nextFloat() * 2f).toFloat() // 0-2% packet loss
             )
         }
     }

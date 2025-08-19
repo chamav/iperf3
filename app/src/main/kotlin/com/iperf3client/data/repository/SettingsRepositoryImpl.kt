@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.iperf3client.domain.model.Protocol
 import com.iperf3client.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -36,6 +37,17 @@ class SettingsRepositoryImpl(
         private val FIRST_RUN_KEY = booleanPreferencesKey("first_run")
         private val ONBOARDING_COMPLETED_KEY = booleanPreferencesKey("onboarding_completed")
         
+        // Default test settings
+        private val DEFAULT_TEST_DURATION_KEY = intPreferencesKey("default_test_duration")
+        private val DEFAULT_PARALLEL_STREAMS_KEY = intPreferencesKey("default_parallel_streams")
+        private val DEFAULT_PROTOCOL_KEY = stringPreferencesKey("default_protocol")
+        
+        // UI settings
+        private val KEEP_SCREEN_ON_KEY = booleanPreferencesKey("keep_screen_on")
+        private val SHOW_NOTIFICATIONS_DURING_TEST_KEY = booleanPreferencesKey("show_notifications_during_test")
+        private val AUTO_EXPORT_RESULTS_KEY = booleanPreferencesKey("auto_export_results")
+        private val MAX_HISTORY_SIZE_KEY = intPreferencesKey("max_history_size")
+        
         // Default values
         private const val DEFAULT_MAX_DURATION = 300 // 5 minutes
         private const val DEFAULT_MAX_STREAMS = 10
@@ -46,6 +58,15 @@ class SettingsRepositoryImpl(
         private const val DEFAULT_THEME = "system"
         private const val DEFAULT_RETENTION_DAYS = 30
         private const val DEFAULT_MAX_HISTORY_ENTRIES = 1000
+        
+        // New default values
+        private const val DEFAULT_TEST_DURATION = 10
+        private const val DEFAULT_PARALLEL_STREAMS = 1
+        private const val DEFAULT_PROTOCOL = "TCP"
+        private const val DEFAULT_KEEP_SCREEN_ON = true
+        private const val DEFAULT_SHOW_NOTIFICATIONS_DURING_TEST = true
+        private const val DEFAULT_AUTO_EXPORT_RESULTS = false
+        private const val DEFAULT_MAX_HISTORY_SIZE = 100
     }
     
     // General settings
@@ -189,6 +210,97 @@ class SettingsRepositoryImpl(
     override suspend fun clearAll() {
         context.dataStore.edit { preferences ->
             preferences.clear()
+        }
+    }
+    
+    // Default test settings
+    override fun getDefaultTestDuration(): Flow<Int> {
+        return context.dataStore.data.map { preferences ->
+            preferences[DEFAULT_TEST_DURATION_KEY] ?: DEFAULT_TEST_DURATION
+        }
+    }
+    
+    override suspend fun setDefaultTestDuration(duration: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[DEFAULT_TEST_DURATION_KEY] = duration
+        }
+    }
+    
+    override fun getDefaultParallelStreams(): Flow<Int> {
+        return context.dataStore.data.map { preferences ->
+            preferences[DEFAULT_PARALLEL_STREAMS_KEY] ?: DEFAULT_PARALLEL_STREAMS
+        }
+    }
+    
+    override suspend fun setDefaultParallelStreams(streams: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[DEFAULT_PARALLEL_STREAMS_KEY] = streams
+        }
+    }
+    
+    override fun getDefaultProtocol(): Flow<Protocol> {
+        return context.dataStore.data.map { preferences ->
+            val protocolString = preferences[DEFAULT_PROTOCOL_KEY] ?: DEFAULT_PROTOCOL
+            try {
+                Protocol.valueOf(protocolString)
+            } catch (e: IllegalArgumentException) {
+                Protocol.TCP
+            }
+        }
+    }
+    
+    override suspend fun setDefaultProtocol(protocol: Protocol) {
+        context.dataStore.edit { preferences ->
+            preferences[DEFAULT_PROTOCOL_KEY] = protocol.name
+        }
+    }
+    
+    // UI settings
+    override fun getKeepScreenOn(): Flow<Boolean> {
+        return context.dataStore.data.map { preferences ->
+            preferences[KEEP_SCREEN_ON_KEY] ?: DEFAULT_KEEP_SCREEN_ON
+        }
+    }
+    
+    override suspend fun setKeepScreenOn(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEEP_SCREEN_ON_KEY] = enabled
+        }
+    }
+    
+    override fun getShowNotificationsDuringTest(): Flow<Boolean> {
+        return context.dataStore.data.map { preferences ->
+            preferences[SHOW_NOTIFICATIONS_DURING_TEST_KEY] ?: DEFAULT_SHOW_NOTIFICATIONS_DURING_TEST
+        }
+    }
+    
+    override suspend fun setShowNotificationsDuringTest(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SHOW_NOTIFICATIONS_DURING_TEST_KEY] = enabled
+        }
+    }
+    
+    override fun getAutoExportResults(): Flow<Boolean> {
+        return context.dataStore.data.map { preferences ->
+            preferences[AUTO_EXPORT_RESULTS_KEY] ?: DEFAULT_AUTO_EXPORT_RESULTS
+        }
+    }
+    
+    override suspend fun setAutoExportResults(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[AUTO_EXPORT_RESULTS_KEY] = enabled
+        }
+    }
+    
+    override fun getMaxHistorySize(): Flow<Int> {
+        return context.dataStore.data.map { preferences ->
+            preferences[MAX_HISTORY_SIZE_KEY] ?: DEFAULT_MAX_HISTORY_SIZE
+        }
+    }
+    
+    override suspend fun setMaxHistorySize(size: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[MAX_HISTORY_SIZE_KEY] = size
         }
     }
 }

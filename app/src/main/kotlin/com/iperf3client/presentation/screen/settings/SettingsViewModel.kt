@@ -25,34 +25,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
     
     private fun loadSettings() {
-        combine(
-            settingsRepository.getWifiOnlyDefault(),
-            settingsRepository.getDefaultTestDuration(),
-            settingsRepository.getDefaultParallelStreams(),
-            settingsRepository.getDefaultProtocol(),
-            settingsRepository.getKeepScreenOn(),
-            settingsRepository.getShowNotificationsDuringTest(),
-            settingsRepository.getAutoExportResults(),
-            settingsRepository.getMaxHistorySize()
-        ) { wifiOnly, duration, streams, protocol, keepScreen, notifications, autoExport, maxHistory ->
-            SettingsUiState(
-                wifiOnlyDefault = wifiOnly,
-                defaultTestDuration = duration,
-                defaultParallelStreams = streams,
-                defaultProtocol = protocol,
-                keepScreenOn = keepScreen,
-                showNotificationsDuringTest = notifications,
-                autoExportResults = autoExport,
-                maxHistorySize = maxHistory
-            )
-        }.launchIn(viewModelScope.apply {
-            launch {
-                settingsRepository.getWifiOnlyDefault().collect { wifiOnly ->
-                    uiState = uiState.copy(wifiOnlyDefault = wifiOnly)
-                }
-            }
-        })
-        
         // Load each setting individually to ensure proper state updates
         viewModelScope.launch {
             settingsRepository.getWifiOnlyDefault().collect { wifiOnly ->

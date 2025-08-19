@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Server
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
@@ -174,7 +174,7 @@ private val bottomNavItems = listOf(
     BottomNavItem(
         route = Screen.Servers.route,
         titleRes = R.string.nav_servers,
-        icon = Icons.Default.Server
+        icon = Icons.Default.Storage
     ),
     BottomNavItem(
         route = Screen.History.route,

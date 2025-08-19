@@ -1,5 +1,6 @@
 package com.iperf3client.domain.repository
 
+import com.iperf3client.domain.model.Protocol
 import kotlinx.coroutines.flow.Flow
 
 interface SettingsRepository {
@@ -45,4 +46,27 @@ interface SettingsRepository {
     
     // Clear all settings
     suspend fun clearAll()
+    
+    // Default test settings
+    fun getDefaultTestDuration(): Flow<Int>
+    suspend fun setDefaultTestDuration(duration: Int)
+    
+    fun getDefaultParallelStreams(): Flow<Int>
+    suspend fun setDefaultParallelStreams(streams: Int)
+    
+    fun getDefaultProtocol(): Flow<Protocol>
+    suspend fun setDefaultProtocol(protocol: Protocol)
+    
+    // UI settings
+    fun getKeepScreenOn(): Flow<Boolean>
+    suspend fun setKeepScreenOn(enabled: Boolean)
+    
+    fun getShowNotificationsDuringTest(): Flow<Boolean>
+    suspend fun setShowNotificationsDuringTest(enabled: Boolean)
+    
+    fun getAutoExportResults(): Flow<Boolean>
+    suspend fun setAutoExportResults(enabled: Boolean)
+    
+    fun getMaxHistorySize(): Flow<Int>
+    suspend fun setMaxHistorySize(size: Int)
 }
