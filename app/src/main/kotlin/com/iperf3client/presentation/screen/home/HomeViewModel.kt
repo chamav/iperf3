@@ -20,10 +20,17 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import android.content.ComponentName
+import android.content.Context
+import android.content.ServiceConnection
+import android.content.Intent
+import android.os.IBinder
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     
     private val app = application as IperfApplication
+    private var serviceBinder: IperfTestService.IperfTestBinder? = null
+    private var serviceConnection: ServiceConnection? = null
     
     private val runTestUseCase = RunTestUseCase(
         iperfEngine = IperfEngineImpl(application),
@@ -43,6 +50,79 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     
     companion object {
         private const val TAG = "HomeViewModel"
+    }
+    
+    init {
+        bindToService()
+    }
+    
+    private fun bindToService() {
+        serviceConnection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                Logger.i(TAG, "Connected to IperfTestService")
+                serviceBinder = service as? IperfTestService.IperfTestBinder
+                serviceBinder?.apply {
+                    addStatusCallback { status ->
+                        uiState = uiState.copy(testStatus = status)
+                    }
+                    addProgressCallback { event ->
+                        handleServiceEvent(event)
+                    }
+                }
+            }
+            
+            override fun onServiceDisconnected(name: ComponentName?) {
+                Logger.i(TAG, "Disconnected from IperfTestService")
+                serviceBinder = null
+            }
+        }
+        
+        val intent = Intent(getApplication(), IperfTestService::class.java)
+        getApplication<Application>().bindService(intent, serviceConnection!!, Context.BIND_AUTO_CREATE)
+    }
+    
+    private fun handleServiceEvent(event: IperfEvent) {
+        when (event) {
+            is IperfEvent.Started -> {
+                uiState = uiState.copy(
+                    currentSessionId = event.sessionId,
+                    testStatus = TestStatus.RUNNING
+                )
+            }
+            is IperfEvent.Progress -> {
+                val timeline = uiState.timeline + event.tick
+                uiState = uiState.copy(
+                    currentTick = event.tick,
+                    timeline = timeline
+                )
+            }
+            is IperfEvent.Completed -> {
+                uiState = uiState.copy(
+                    testStatus = TestStatus.COMPLETED,
+                    currentTestResult = event.result,
+                    timeline = event.result.timeline
+                )
+            }
+            is IperfEvent.Error -> {
+                uiState = uiState.copy(
+                    testStatus = TestStatus.ERROR,
+                    validationError = event.error
+                )
+            }
+            is IperfEvent.Log -> {
+                // Log events are handled internally
+                Logger.d(TAG, "Log event: ${event.line}")
+            }
+        }
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        Logger.d(TAG, "HomeViewModel cleared")
+        serviceConnection?.let {
+            getApplication<Application>().unbindService(it)
+        }
+        serviceBinder = null
     }
     
     init {
@@ -221,27 +301,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         
         try {
             // Start foreground service for background testing
+            // The service will handle the test execution and send updates
             IperfTestService.startTest(getApplication(), uiState.testParams)
             
-            // Also run directly for UI updates
-            viewModelScope.launch {
-                try {
-                    runTestUseCase(uiState.testParams)
-                        .onEach { result ->
-                            handleTestResult(result)
-                        }
-                        .launchIn(this)
-                } catch (e: CancellationException) {
-                    Logger.i(TAG, "Test was cancelled")
-                    throw e // Re-throw cancellation to respect coroutine cancellation
-                } catch (e: Exception) {
-                    Logger.e(TAG, "Test execution failed", e)
-                    uiState = uiState.copy(
-                        testStatus = TestStatus.ERROR,
-                        validationError = "Test failed: ${e.message}"
-                    )
-                }
-            }
+            // DO NOT run test directly here - it will cause double execution!
+            // The service is already running the test and will send updates via callbacks
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to start test service", e)
             uiState = uiState.copy(

@@ -1086,7 +1086,7 @@ class IperfEngineImpl(
         }
         
         withContext(Dispatchers.IO) {
-            val success = native.runTest(
+            native.runTest(
                 host = params.host,
                 port = params.port,
                 duration = params.durationSec,
@@ -1096,10 +1096,8 @@ class IperfEngineImpl(
                 callback = callback,
                 cacheDir = context.cacheDir.absolutePath
             )
-            
-            if (!success) {
-                send(IperfEvent.Error("Failed to start native test", sessionId))
-            }
+            // Note: All events (progress, complete, error) are handled by the callback
+            // No need to check return value as errors are reported via onError callback
         }
     }
 }

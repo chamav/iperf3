@@ -46,13 +46,17 @@ Java_com_iperf3client_jni_Iperf3Native_setEnvironmentVariable(JNIEnv *env, jobje
 
 // Callback function for iperf3 output
 static void jni_iperf_reporter_callback(struct iperf_test *test) {
-    if (!callback_obj || !jvm) return;
+    if (!callback_obj || !jvm) {
+        LOGW("Reporter callback called but no callback object or JVM");
+        return;
+    }
     
     JNIEnv *env;
     int attached = 0;
     
     if ((*jvm)->GetEnv(jvm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
         if ((*jvm)->AttachCurrentThread(jvm, &env, NULL) != JNI_OK) {
+            LOGE("Failed to attach thread for callback");
             return;
         }
         attached = 1;
@@ -66,10 +70,16 @@ static void jni_iperf_reporter_callback(struct iperf_test *test) {
             double mbps = (double)(irp->bytes_transferred * 8) / (irp->interval_duration * 1e6);
             int retransmits = irp->interval_retrans;
             
+            LOGI("Progress callback: %.2f Mbps, %d retransmits", mbps, retransmits);
+            
             // Call Java callback
             (*env)->CallVoidMethod(env, callback_obj, on_progress_method, 
                                   (jdouble)mbps, (jint)retransmits);
+        } else {
+            LOGW("No interval results available");
         }
+    } else {
+        LOGW("No streams available");
     }
     
     if (attached) {
