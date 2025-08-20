@@ -97,6 +97,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             is IperfEvent.Completed -> {
+                Logger.i(TAG, "Test completed event received")
+                Logger.d(TAG, "Result summary: avg=${event.result.summary?.avgMbps}, " +
+                        "max=${event.result.summary?.maxMbps}, min=${event.result.summary?.minMbps}")
+                Logger.d(TAG, "Timeline size: ${event.result.timeline.size}")
+                
                 uiState = uiState.copy(
                     testStatus = TestStatus.COMPLETED,
                     currentTestResult = event.result,

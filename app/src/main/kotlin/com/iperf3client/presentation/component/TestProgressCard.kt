@@ -82,7 +82,8 @@ fun TestProgressCard(
             currentTick?.let { tick ->
                 CurrentMetricsDisplay(
                     tick = tick,
-                    protocol = testParams.protocol
+                    protocol = testParams.protocol,
+                    parallelStreams = testParams.parallelStreams
                 )
             }
             
@@ -101,6 +102,7 @@ fun TestProgressCard(
 private fun CurrentMetricsDisplay(
     tick: LiveMetricsTick,
     protocol: Protocol,
+    parallelStreams: Int = 1,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -123,7 +125,7 @@ private fun CurrentMetricsDisplay(
             
             // Speed - always present
             MetricRow(
-                label = "Speed",
+                label = if (parallelStreams > 1) "Total Speed ($parallelStreams streams)" else "Speed",
                 value = "${String.format("%.2f", tick.throughputMbps)} Mbps",
                 isHighlighted = true
             )

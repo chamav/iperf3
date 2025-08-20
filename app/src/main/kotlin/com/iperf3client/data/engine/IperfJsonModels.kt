@@ -51,7 +51,7 @@ data class IperfStream(
     val end: Float? = null,
     val seconds: Float? = null,
     val bytes: Long? = null,
-    @SerialName("bits_per_second") val bitsPerSecond: Long? = null,
+    @SerialName("bits_per_second") val bitsPerSecond: Double? = null,
     val retransmits: Int? = null,
     @SerialName("snd_cwnd") val sndCwnd: Long? = null,
     val rtt: Long? = null,
@@ -72,7 +72,7 @@ data class IperfSum(
     val end: Float? = null,
     val seconds: Float? = null,
     val bytes: Long? = null,
-    @SerialName("bits_per_second") val bitsPerSecond: Long? = null,
+    @SerialName("bits_per_second") val bitsPerSecond: Double? = null,
     val retransmits: Int? = null,
     val omitted: Boolean? = null,
     
@@ -99,7 +99,7 @@ data class IperfEndStream(
     val end: Float? = null,
     val seconds: Float? = null,
     val bytes: Long? = null,
-    @SerialName("bits_per_second") val bitsPerSecond: Long? = null,
+    @SerialName("bits_per_second") val bitsPerSecond: Double? = null,
     val retransmits: Int? = null,
     @SerialName("max_snd_cwnd") val maxSndCwnd: Long? = null,
     @SerialName("max_rtt") val maxRtt: Long? = null,
@@ -119,7 +119,7 @@ data class IperfEndSum(
     val end: Float? = null,
     val seconds: Float? = null,
     val bytes: Long? = null,
-    @SerialName("bits_per_second") val bitsPerSecond: Long? = null,
+    @SerialName("bits_per_second") val bitsPerSecond: Double? = null,
     val retransmits: Int? = null,
     
     // UDP specific fields

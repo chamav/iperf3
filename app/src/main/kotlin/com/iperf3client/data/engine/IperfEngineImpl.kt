@@ -280,6 +280,10 @@ class IperfEngineImpl(
                             
                             // Handle interval data
                             jsonOutput.intervals?.forEach { interval ->
+                                // Log interval data for debugging multi-stream issues
+                                if (params.parallelStreams > 1) {
+                                    Logger.d(TAG, "Interval $currentSecond - sum: ${interval.sum?.bitsPerSecond}, streams count: ${interval.streams?.size}")
+                                }
                                 val tick = parseIntervalToTick(interval, ++currentSecond, params.protocol)
                                 tick?.let {
                                     timeline.add(it)
@@ -290,7 +294,14 @@ class IperfEngineImpl(
                             // Handle final results
                             if (jsonOutput.end != null) {
                                 val endTime = Instant.now()
-                                val summary = parseFinalResults(jsonOutput.end, params.protocol)
+                                // Log final results for debugging
+                                if (params.parallelStreams > 1) {
+                                    Logger.d(TAG, "Final results - sum: ${jsonOutput.end.sum?.bitsPerSecond}, " +
+                                            "sum_sent: ${jsonOutput.end.sumSent?.bitsPerSecond}, " +
+                                            "sum_received: ${jsonOutput.end.sumReceived?.bitsPerSecond}, " +
+                                            "streams count: ${jsonOutput.end.streams?.size}")
+                                }
+                                val summary = parseFinalResults(jsonOutput.end, params.protocol, params.reverse)
                                 
                                 val result = TestResult(
                                     startedAt = startTime,
@@ -811,38 +822,155 @@ class IperfEngineImpl(
     }
     
     private fun parseIntervalToTick(interval: IperfInterval, second: Int, protocol: Protocol): LiveMetricsTick? {
-        val sum = interval.sum ?: return null
+        // Приоритет: 1) sum если есть и валидный, 2) суммируем streams
+        val throughputMbps: Float
+        var retransmits: Int? = null
+        var jitterMs: Float? = null
+        var packetLossPct: Float? = null
         
-        val throughputMbps = (sum.bitsPerSecond ?: 0L) / 1_000_000f
+        if (interval.sum != null && (interval.sum.bitsPerSecond ?: 0.0) > 0) {
+            // Используем sum если он есть и содержит данные
+            throughputMbps = (interval.sum.bitsPerSecond ?: 0.0).toFloat() / 1_000_000f
+            retransmits = interval.sum.retransmits
+            jitterMs = interval.sum.jitterMs
+            packetLossPct = interval.sum.lostPercent
+        } else if (!interval.streams.isNullOrEmpty()) {
+            // Если sum пустой или отсутствует, суммируем данные из streams
+            var totalBitsPerSecond = 0.0
+            var totalRetransmits = 0
+            var totalLostPercent = 0f
+            var avgJitter = 0f
+            var jitterCount = 0
+            
+            for (stream in interval.streams) {
+                totalBitsPerSecond += stream.bitsPerSecond ?: 0.0
+                totalRetransmits += stream.retransmits ?: 0
+                stream.lostPercent?.let { totalLostPercent += it }
+                stream.jitterMs?.let { 
+                    avgJitter += it
+                    jitterCount++
+                }
+            }
+            
+            throughputMbps = totalBitsPerSecond.toFloat() / 1_000_000f
+            retransmits = if (totalRetransmits > 0) totalRetransmits else null
+            jitterMs = if (jitterCount > 0) avgJitter / jitterCount else null
+            packetLossPct = if (totalLostPercent > 0) totalLostPercent / interval.streams.size else null
+        } else {
+            // Нет данных
+            return null
+        }
         
         return when (protocol) {
             Protocol.TCP -> LiveMetricsTick(
                 second = second,
                 throughputMbps = throughputMbps,
-                retransmits = sum.retransmits,
+                retransmits = retransmits,
                 rttMs = null // RTT typically comes from stream data, not sum
             )
             Protocol.UDP -> LiveMetricsTick(
                 second = second,
                 throughputMbps = throughputMbps,
-                jitterMs = sum.jitterMs,
-                packetLossPct = sum.lostPercent
+                jitterMs = jitterMs,
+                packetLossPct = packetLossPct
             )
         }
     }
     
-    private fun parseFinalResults(end: IperfEnd, protocol: Protocol): TestSummary {
-        val sum = end.sum ?: end.sumReceived ?: end.sumSent
+    private fun calculateSummaryFromTimeline(timeline: List<LiveMetricsTick>, protocol: Protocol): TestSummary {
+        return if (timeline.isNotEmpty()) {
+            val speeds = timeline.map { it.throughputMbps }
+            TestSummary(
+                avgMbps = speeds.average().toFloat(),
+                maxMbps = speeds.maxOrNull() ?: 0f,
+                minMbps = speeds.minOrNull() ?: 0f,
+                jitterMs = if (protocol == Protocol.UDP) 
+                    timeline.mapNotNull { it.jitterMs }.average().toFloat().takeIf { it > 0 }
+                    else null,
+                packetLossPct = if (protocol == Protocol.UDP)
+                    timeline.mapNotNull { it.packetLossPct }.average().toFloat().takeIf { it > 0 }
+                    else null,
+                retransmits = if (protocol == Protocol.TCP)
+                    timeline.mapNotNull { it.retransmits }.sum()
+                    else null,
+                rttMs = timeline.mapNotNull { it.rttMs }.average().toFloat().takeIf { it > 0 },
+                totalBytes = null
+            )
+        } else {
+            // Fallback default values
+            TestSummary(
+                avgMbps = 0f,
+                maxMbps = 0f,
+                minMbps = 0f,
+                jitterMs = null,
+                packetLossPct = null,
+                retransmits = null,
+                rttMs = null,
+                totalBytes = null
+            )
+        }
+    }
+    
+    private fun parseFinalResults(end: IperfEnd, protocol: Protocol, reverse: Boolean = false): TestSummary {
+        // В reverse mode (download) используем sum_received, иначе sum_sent или sum
+        var sum = when {
+            reverse && end.sumReceived != null -> end.sumReceived
+            !reverse && end.sumSent != null -> end.sumSent
+            end.sum != null -> end.sum
+            end.sumReceived != null -> end.sumReceived
+            else -> end.sumSent
+        }
         
-        val avgMbps = (sum?.bitsPerSecond ?: 0L) / 1_000_000f
-        val totalBytes = sum?.bytes ?: 0L
+        Logger.d(TAG, "parseFinalResults: reverse=$reverse, sum.bps=${sum?.bitsPerSecond}, " +
+                "sumSent.bps=${end.sumSent?.bitsPerSecond}, sumReceived.bps=${end.sumReceived?.bitsPerSecond}")
+        
+        // Если sum пустой или имеет нулевую скорость, пробуем суммировать streams
+        var avgMbps = (sum?.bitsPerSecond ?: 0.0).toFloat() / 1_000_000f
+        var totalBytes = sum?.bytes ?: 0L
+        var retransmits = sum?.retransmits ?: 0
+        var jitterMs = sum?.jitterMs ?: 0f
+        var packetLossPct = sum?.lostPercent ?: 0f
+        
+        Logger.d(TAG, "Initial avgMbps from sum: $avgMbps")
+        
+        if (avgMbps <= 0 && !end.streams.isNullOrEmpty()) {
+            Logger.d(TAG, "Sum is 0 or negative, calculating from ${end.streams.size} streams")
+            // Суммируем данные из streams
+            var totalBitsPerSecond = 0.0
+            var totalBytesFromStreams = 0L
+            var totalRetransmits = 0
+            var avgJitter = 0f
+            var totalLostPercent = 0f
+            var jitterCount = 0
+            
+            for (stream in end.streams) {
+                totalBitsPerSecond += stream.bitsPerSecond ?: 0.0
+                totalBytesFromStreams += stream.bytes ?: 0L
+                totalRetransmits += stream.retransmits ?: 0
+                stream.jitterMs?.let { 
+                    avgJitter += it
+                    jitterCount++
+                }
+                stream.lostPercent?.let { totalLostPercent += it }
+            }
+            
+            avgMbps = totalBitsPerSecond.toFloat() / 1_000_000f
+            totalBytes = if (totalBytesFromStreams > 0) totalBytesFromStreams else totalBytes
+            retransmits = totalRetransmits
+            jitterMs = if (jitterCount > 0) avgJitter / jitterCount else jitterMs
+            packetLossPct = if (totalLostPercent > 0) totalLostPercent / end.streams.size else packetLossPct
+            
+            Logger.d(TAG, "Calculated from streams: avgMbps=$avgMbps, totalBytes=$totalBytes")
+        }
+        
+        Logger.d(TAG, "Final avgMbps: $avgMbps")
         
         return when (protocol) {
             Protocol.TCP -> TestSummary(
                 avgMbps = avgMbps,
                 maxMbps = avgMbps, // iperf3 doesn't provide max/min in final summary
                 minMbps = avgMbps,
-                retransmits = sum?.retransmits ?: 0,
+                retransmits = retransmits,
                 rttMs = 0f, // Would need to calculate from stream data
                 totalBytes = totalBytes
             )
@@ -850,8 +978,8 @@ class IperfEngineImpl(
                 avgMbps = avgMbps,
                 maxMbps = avgMbps,
                 minMbps = avgMbps,
-                jitterMs = sum?.jitterMs ?: 0f,
-                packetLossPct = sum?.lostPercent ?: 0f,
+                jitterMs = jitterMs,
+                packetLossPct = packetLossPct,
                 totalBytes = totalBytes
             )
         }
@@ -1024,43 +1152,71 @@ class IperfEngineImpl(
             
             override fun onComplete(jsonResult: String) {
                 Logger.i(TAG, "Native test completed, parsing JSON result")
+                Logger.d(TAG, "Timeline has ${timeline.size} entries")
+                if (timeline.isNotEmpty()) {
+                    Logger.d(TAG, "Timeline speeds: ${timeline.map { it.throughputMbps }}")
+                }
+                
                 try {
                     // Parse JSON result and create TestResult
                     val endTime = Instant.now()
                     val startTime = endTime.minusSeconds(params.durationSec.toLong())
                     
-                    // Calculate summary from timeline
+                    // Native iperf3 often returns incomplete JSON, so we'll use timeline data
+                    // which is more reliable since it comes from progress callbacks
                     val summary = if (timeline.isNotEmpty()) {
-                        val speeds = timeline.map { it.throughputMbps }
-                        TestSummary(
-                            avgMbps = speeds.average().toFloat(),
-                            maxMbps = speeds.maxOrNull() ?: 0f,
-                            minMbps = speeds.minOrNull() ?: 0f,
-                            jitterMs = if (params.protocol == Protocol.UDP) 
-                                timeline.mapNotNull { it.jitterMs }.average().toFloat().takeIf { it > 0 }
-                                else null,
-                            packetLossPct = if (params.protocol == Protocol.UDP)
-                                timeline.mapNotNull { it.packetLossPct }.average().toFloat().takeIf { it > 0 }
-                                else null,
-                            retransmits = if (params.protocol == Protocol.TCP)
-                                timeline.mapNotNull { it.retransmits }.sum()
-                                else null,
-                            rttMs = timeline.mapNotNull { it.rttMs }.average().toFloat().takeIf { it > 0 },
-                            totalBytes = null
-                        )
+                        Logger.d(TAG, "Using timeline data for summary (more reliable)")
+                        calculateSummaryFromTimeline(timeline, params.protocol)
                     } else {
-                        // Fallback if no timeline data
-                        TestSummary(
-                            avgMbps = 100.0f, // TODO: Parse from JSON
-                            maxMbps = 150.0f,
-                            minMbps = 50.0f,
-                            jitterMs = null,
-                            packetLossPct = null,
-                            retransmits = null,
-                            rttMs = null,
-                            totalBytes = null
-                        )
+                        // Try parsing JSON as fallback
+                        try {
+                            if (jsonResult.isNotEmpty()) {
+                                Logger.d(TAG, "Timeline empty, trying JSON (length: ${jsonResult.length})")
+                                val jsonOutput = json.decodeFromString<IperfJsonOutput>(jsonResult)
+                                if (jsonOutput.end != null) {
+                                    parseFinalResults(jsonOutput.end, params.protocol, params.reverse)
+                                } else {
+                                    Logger.w(TAG, "No data available, using zeros")
+                                    TestSummary(
+                                        avgMbps = 0f,
+                                        maxMbps = 0f,
+                                        minMbps = 0f,
+                                        jitterMs = null,
+                                        packetLossPct = null,
+                                        retransmits = null,
+                                        rttMs = null,
+                                        totalBytes = null
+                                    )
+                                }
+                            } else {
+                                Logger.w(TAG, "No data available, using zeros")
+                                TestSummary(
+                                    avgMbps = 0f,
+                                    maxMbps = 0f,
+                                    minMbps = 0f,
+                                    jitterMs = null,
+                                    packetLossPct = null,
+                                    retransmits = null,
+                                    rttMs = null,
+                                    totalBytes = null
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Logger.e(TAG, "Failed to parse JSON", e)
+                            TestSummary(
+                                avgMbps = 0f,
+                                maxMbps = 0f,
+                                minMbps = 0f,
+                                jitterMs = null,
+                                packetLossPct = null,
+                                retransmits = null,
+                                rttMs = null,
+                                totalBytes = null
+                            )
+                        }
                     }
+                    
+                    Logger.i(TAG, "Test summary: avg=${summary.avgMbps} Mbps, max=${summary.maxMbps} Mbps, min=${summary.minMbps} Mbps")
                     
                     val result = TestResult(
                         startedAt = startTime,

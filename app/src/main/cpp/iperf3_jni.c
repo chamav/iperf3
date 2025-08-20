@@ -62,24 +62,34 @@ static void jni_iperf_reporter_callback(struct iperf_test *test) {
         attached = 1;
     }
     
-    // Get current interval stats
-    struct iperf_stream *sp = SLIST_FIRST(&test->streams);
-    if (sp) {
+    // Sum stats from all streams
+    double total_bytes = 0;
+    double interval_duration = 0;
+    int total_retransmits = 0;
+    int stream_count = 0;
+    
+    struct iperf_stream *sp;
+    SLIST_FOREACH(sp, &test->streams, streams) {
         struct iperf_interval_results *irp = TAILQ_LAST(&sp->result->interval_results, irlisthead);
         if (irp) {
-            double mbps = (double)(irp->bytes_transferred * 8) / (irp->interval_duration * 1e6);
-            int retransmits = irp->interval_retrans;
-            
-            LOGI("Progress callback: %.2f Mbps, %d retransmits", mbps, retransmits);
-            
-            // Call Java callback
-            (*env)->CallVoidMethod(env, callback_obj, on_progress_method, 
-                                  (jdouble)mbps, (jint)retransmits);
-        } else {
-            LOGW("No interval results available");
+            total_bytes += irp->bytes_transferred;
+            interval_duration = irp->interval_duration; // Should be same for all streams
+            total_retransmits += irp->interval_retrans;
+            stream_count++;
         }
+    }
+    
+    if (stream_count > 0 && interval_duration > 0) {
+        double mbps = (total_bytes * 8) / (interval_duration * 1e6);
+        
+        LOGI("Progress callback: %.2f Mbps (sum of %d streams), %d retransmits", 
+             mbps, stream_count, total_retransmits);
+        
+        // Call Java callback with summed throughput
+        (*env)->CallVoidMethod(env, callback_obj, on_progress_method, 
+                              (jdouble)mbps, (jint)total_retransmits);
     } else {
-        LOGW("No streams available");
+        LOGW("No interval results available from %d streams", stream_count);
     }
     
     if (attached) {
@@ -243,12 +253,26 @@ Java_com_iperf3client_jni_Iperf3Native_runClient(JNIEnv *env, jobject thiz, jlon
             // Get JSON result
             char *json = iperf_get_test_json_output_string(test);
             if (json) {
-                LOGI("JSON result available, length: %zu", strlen(json));
+                size_t json_len = strlen(json);
+                LOGI("JSON result available, length: %zu", json_len);
+                
+                // Log first 500 chars of JSON for debugging
+                if (json_len > 0) {
+                    char preview[501];
+                    strncpy(preview, json, 500);
+                    preview[500] = '\0';
+                    LOGI("JSON preview: %s", preview);
+                }
+                
                 jstring jsonStr = (*env)->NewStringUTF(env, json);
                 (*env)->CallVoidMethod(env, callback_obj, on_complete_method, jsonStr);
                 (*env)->DeleteLocalRef(env, jsonStr);
             } else {
-                LOGW("No JSON result available");
+                LOGW("No JSON result available - sending empty string");
+                // Send empty string instead of not calling callback
+                jstring emptyStr = (*env)->NewStringUTF(env, "");
+                (*env)->CallVoidMethod(env, callback_obj, on_complete_method, emptyStr);
+                (*env)->DeleteLocalRef(env, emptyStr);
             }
         }
     }

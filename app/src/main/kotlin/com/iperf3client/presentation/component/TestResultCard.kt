@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -26,6 +27,12 @@ fun TestResultCard(
     onViewDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Debug logging
+    LaunchedEffect(testResult) {
+        println("TestResultCard - summary: ${testResult.summary}")
+        println("TestResultCard - avgMbps: ${testResult.summary?.avgMbps}")
+        println("TestResultCard - timeline size: ${testResult.timeline.size}")
+    }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -67,11 +74,26 @@ fun TestResultCard(
             TestInfoSection(testResult = testResult)
             
             // Summary Metrics
-            testResult.summary?.let { summary ->
+            if (testResult.summary != null) {
                 SummaryMetricsSection(
-                    summary = summary,
-                    protocol = testResult.params.protocol
+                    summary = testResult.summary,
+                    protocol = testResult.params.protocol,
+                    parallelStreams = testResult.params.parallelStreams
                 )
+            } else {
+                // Show message when no summary available
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = "No performance data available",
+                        modifier = Modifier.padding(12.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
             }
             
             // Action Buttons
@@ -151,6 +173,7 @@ private fun TestInfoSection(
 private fun SummaryMetricsSection(
     summary: com.iperf3client.domain.model.TestSummary,
     protocol: Protocol,
+    parallelStreams: Int = 1,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -166,7 +189,7 @@ private fun SummaryMetricsSection(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Performance Summary",
+                text = if (parallelStreams > 1) "Performance Summary ($parallelStreams streams total)" else "Performance Summary",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -177,7 +200,7 @@ private fun SummaryMetricsSection(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 MetricDisplay(
-                    label = "Average",
+                    label = if (parallelStreams > 1) "Avg Total" else "Average",
                     value = "${String.format("%.2f", summary.avgMbps)} Mbps",
                     isHighlighted = true
                 )
@@ -189,6 +212,19 @@ private fun SummaryMetricsSection(
                     label = "Minimum",
                     value = "${String.format("%.2f", summary.minMbps)} Mbps"
                 )
+            }
+            
+            // Show per-stream average if multiple streams
+            if (parallelStreams > 1) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    MetricDisplay(
+                        label = "Avg per Stream",
+                        value = "${String.format("%.2f", summary.avgMbps / parallelStreams)} Mbps"
+                    )
+                }
             }
             
             // Protocol specific metrics
