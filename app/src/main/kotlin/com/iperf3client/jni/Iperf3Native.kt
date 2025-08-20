@@ -33,6 +33,7 @@ class Iperf3Native {
     }
     
     // Native methods
+    external fun setEnvironmentVariable(name: String, value: String): Boolean
     external fun createTest(): Long
     external fun setTestParams(
         testPtr: Long,
@@ -64,11 +65,19 @@ class Iperf3Native {
         // Set TMPDIR for iperf3 temporary files
         if (cacheDir != null) {
             try {
-                val runtime = Runtime.getRuntime()
-                runtime.exec(arrayOf("sh", "-c", "export TMPDIR=$cacheDir"))
+                // Set environment variable for current process
+                val processBuilder = ProcessBuilder()
+                val environment = processBuilder.environment()
+                environment["TMPDIR"] = cacheDir
+                
+                // Also try to set as system property
                 System.setProperty("TMPDIR", cacheDir)
+                
+                // Set in native environment
+                setEnvironmentVariable("TMPDIR", cacheDir)
             } catch (e: Exception) {
                 // Ignore errors setting TMPDIR
+                e.printStackTrace()
             }
         }
         

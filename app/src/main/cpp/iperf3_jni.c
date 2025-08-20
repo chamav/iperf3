@@ -3,6 +3,11 @@
 #include <android/log.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <stdio.h>
 #include "iperf_config.h"
 #include "iperf_api.h"
 #include "iperf.h"
@@ -20,6 +25,21 @@ static jmethodID on_error_method = NULL;
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     jvm = vm;
     return JNI_VERSION_1_6;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_iperf3client_jni_Iperf3Native_setEnvironmentVariable(JNIEnv *env, jobject thiz, 
+                                                              jstring name, jstring value) {
+    const char *nameStr = (*env)->GetStringUTFChars(env, name, 0);
+    const char *valueStr = (*env)->GetStringUTFChars(env, value, 0);
+    
+    int result = setenv(nameStr, valueStr, 1);
+    LOGI("Setting env %s=%s, result=%d", nameStr, valueStr, result);
+    
+    (*env)->ReleaseStringUTFChars(env, name, nameStr);
+    (*env)->ReleaseStringUTFChars(env, value, valueStr);
+    
+    return result == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
 // Callback function for iperf3 output
@@ -69,13 +89,23 @@ Java_com_iperf3client_jni_Iperf3Native_createTest(JNIEnv *env, jobject thiz) {
     // Set as client mode
     iperf_set_test_role(test, 'c');
     
+    // Set bind address to any (important for Android)
+    iperf_set_test_bind_address(test, "0.0.0.0");
+    
     // Set callback
     test->reporter_callback = jni_iperf_reporter_callback;
     
-    // Set temp directory for Android
+    // Set temp directory for Android - use app's cache directory
     char *cache_dir = getenv("TMPDIR");
-    if (cache_dir) {
-        iperf_set_test_template(test, cache_dir);
+    if (cache_dir && strlen(cache_dir) > 0) {
+        LOGI("Using TMPDIR for template: %s", cache_dir);
+        // Create template path like /path/to/cache/iperf3.XXXXXX
+        char template_path[256];
+        snprintf(template_path, sizeof(template_path), "%s/iperf3.XXXXXX", cache_dir);
+        iperf_set_test_template(test, template_path);
+    } else {
+        // Don't set template - let iperf3 handle it internally
+        LOGI("No TMPDIR set, using default template handling");
     }
     
     return (jlong)(intptr_t)test;
@@ -131,9 +161,28 @@ Java_com_iperf3client_jni_Iperf3Native_setCallback(JNIEnv *env, jobject thiz, jo
 JNIEXPORT jint JNICALL
 Java_com_iperf3client_jni_Iperf3Native_runClient(JNIEnv *env, jobject thiz, jlong testPtr) {
     struct iperf_test *test = (struct iperf_test *)(intptr_t)testPtr;
-    if (!test) return -1;
+    if (!test) {
+        LOGE("Invalid test pointer");
+        return -1;
+    }
     
     LOGI("Starting iperf3 client test");
+    LOGI("Test role: %c", test->role);
+    LOGI("Server host: %s", test->server_hostname);
+    LOGI("Server port: %d", test->server_port);
+    LOGI("Duration: %d", test->duration);
+    LOGI("Streams: %d", test->num_streams);
+    LOGI("Bind address: %s", test->bind_address ? test->bind_address : "NULL");
+    LOGI("Template: %s", test->tmp_template ? test->tmp_template : "NULL");
+    
+    // Test socket creation capability
+    int test_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (test_sock < 0) {
+        LOGE("Cannot create test socket: %s", strerror(errno));
+    } else {
+        LOGI("Test socket created successfully: %d", test_sock);
+        close(test_sock);
+    }
     
     int result = iperf_run_client(test);
     
