@@ -348,219 +348,10 @@ class IperfEngineImpl(
     }
     
     private fun ensureIperfBinaryReady(): Boolean {
-        // Method 1: Try to load library using System.loadLibrary (standard Android approach)
-        try {
-            System.loadLibrary("iperf3")
-            Logger.i(TAG, "Successfully loaded libiperf3.so using System.loadLibrary")
-            
-            // Try to find where the system loaded it to get the actual path
-            val applicationInfo = context.applicationInfo
-            val nativeLibraryDir = applicationInfo.nativeLibraryDir
-            val systemLibPath = "$nativeLibraryDir/libiperf3.so"
-            val systemLibFile = File(systemLibPath)
-            
-            if (systemLibFile.exists()) {
-                Logger.i(TAG, "System loaded library at: $systemLibPath")
-                Logger.i(TAG, "Binary size: ${systemLibFile.length()} bytes, executable: ${systemLibFile.canExecute()}")
-                actualBinaryPath = systemLibPath
-                return true
-            } else {
-                Logger.w(TAG, "System.loadLibrary succeeded but cannot locate file at: $systemLibPath")
-                // Continue with manual search even though loadLibrary worked
-            }
-        } catch (e: UnsatisfiedLinkError) {
-            Logger.w(TAG, "System.loadLibrary failed for libiperf3: ${e.message}")
-            Logger.i(TAG, "Falling back to manual library location")
-        } catch (e: Exception) {
-            Logger.w(TAG, "Unexpected error loading library: ${e.message}")
-        }
-        
-        // Method 2: Manual search (fallback from previous implementation)
-        val applicationInfo = context.applicationInfo
-        val nativeLibraryDir = applicationInfo.nativeLibraryDir
-        
-        Logger.d(TAG, "nativeLibraryDir: $nativeLibraryDir")
-        Logger.d(TAG, "sourceDir: ${applicationInfo.sourceDir}")
-        
-        // Try multiple possible paths for the library
-        val possiblePaths = listOf(
-            "$nativeLibraryDir/libiperf3.so",
-            "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so", 
-            "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
-            "${applicationInfo.dataDir}/lib/libiperf3.so",
-            "/data/app/${context.packageName}/lib/arm64-v8a/libiperf3.so"
-        )
-        
-        for (jniLibsPath in possiblePaths) {
-            val jniLibsFile = File(jniLibsPath)
-            Logger.d(TAG, "Checking for iperf3 binary at: $jniLibsPath")
-            
-            if (jniLibsFile.exists()) {
-                Logger.i(TAG, "Found iperf3 binary in jniLibs: $jniLibsPath")
-                Logger.i(TAG, "Binary size: ${jniLibsFile.length()} bytes, executable: ${jniLibsFile.canExecute()}")
-                actualBinaryPath = jniLibsPath
-                return true
-            }
-        }
-        
-        Logger.w(TAG, "jniLibs binary not found at any expected path")
-        
-        // Try to list directory contents to debug
-        try {
-            val nativeDir = File(nativeLibraryDir)
-            Logger.d(TAG, "Native library directory ($nativeLibraryDir) exists: ${nativeDir.exists()}")
-            if (nativeDir.exists()) {
-                val files = nativeDir.listFiles()
-                Logger.d(TAG, "Native library directory contents (${files?.size ?: 0} files):")
-                files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes, isFile: ${file.isFile})")
-                } ?: Logger.w(TAG, "  - files array is null")
-            } else {
-                Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
-            }
-            
-            // Also try arm64-v8a directory
-            val arm64Dir = File(nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a"))
-            Logger.d(TAG, "arm64-v8a directory (${arm64Dir.absolutePath}) exists: ${arm64Dir.exists()}")
-            if (arm64Dir.exists() && arm64Dir != nativeDir) {
-                val files = arm64Dir.listFiles()
-                Logger.d(TAG, "arm64-v8a directory contents (${files?.size ?: 0} files):")
-                files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes, isFile: ${file.isFile})")
-                } ?: Logger.w(TAG, "  - files array is null")
-            }
-            
-            // Also try parent directory
-            val parentDir = File(nativeLibraryDir).parentFile
-            if (parentDir?.exists() == true) {
-                Logger.d(TAG, "Parent directory (${parentDir.absolutePath}) contents:")
-                parentDir.listFiles()?.forEach { subDir ->
-                    if (subDir.isDirectory && subDir.name.startsWith("lib")) {
-                        Logger.d(TAG, "  - ${subDir.name}/ (${subDir.listFiles()?.size ?: 0} files)")
-                        subDir.listFiles()?.forEach { file ->
-                            if (file.name.contains("iperf")) {
-                                Logger.i(TAG, "    FOUND iperf file: ${file.absolutePath} (${file.length()} bytes)")
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to list native library directories", e)
-        }
-        
-        // Fallback 1: try to copy from jniLibs to private directory
-        Logger.w(TAG, "jniLibs binary not found at expected location, trying to copy from jniLibs")
-        if (copyFromJniLibs()) {
-            return true
-        }
-        
-        // Fallback 2: try to extract from assets if jniLibs copy failed
-        Logger.w(TAG, "jniLibs copy failed, trying to extract from assets")
+        Logger.i(TAG, "Extracting iperf3 binary from assets to private directory")
         return extractIperf3Binary()
     }
     
-    private fun copyFromJniLibs(): Boolean {
-        Logger.d(TAG, "Attempting to copy iperf3 binary from jniLibs to private directory")
-        
-        try {
-            val applicationInfo = context.applicationInfo
-            val nativeLibraryDir = applicationInfo.nativeLibraryDir
-            
-            // Try different possible locations for the library
-            val possiblePaths = listOf(
-                "$nativeLibraryDir/libiperf3.so",
-                "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so",
-                "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
-                "${applicationInfo.sourceDir}!/lib/arm64-v8a/libiperf3.so"
-            )
-            
-            var sourceFile: File? = null
-            for (path in possiblePaths) {
-                val testFile = File(path)
-                Logger.d(TAG, "Looking for jniLibs binary at: ${testFile.absolutePath}")
-                if (testFile.exists()) {
-                    sourceFile = testFile
-                    Logger.i(TAG, "Found jniLibs binary at: ${testFile.absolutePath}")
-                    break
-                }
-            }
-            
-            if (sourceFile == null) {
-                Logger.w(TAG, "Source file not found in any of the expected locations")
-                return false
-            }
-            
-            Logger.i(TAG, "Found jniLibs binary: ${sourceFile.absolutePath}")
-            Logger.d(TAG, "Source file size: ${sourceFile.length()} bytes")
-            
-            // Try copying to different private directories
-            val targetDirs = listOf(
-                context.filesDir,
-                context.cacheDir,
-                context.codeCacheDir
-            )
-            
-            for (targetDir in targetDirs) {
-                val targetFile = File(targetDir, IPERF3_BINARY)
-                
-                try {
-                    Logger.d(TAG, "Attempting to copy to: ${targetFile.absolutePath}")
-                    
-                    // Remove existing file if present
-                    if (targetFile.exists()) {
-                        targetFile.delete()
-                    }
-                    
-                    // Copy the file
-                    sourceFile.copyTo(targetFile, overwrite = true)
-                    
-                    // Set executable permissions
-                    var success = targetFile.setExecutable(true, false)
-                    if (!success) {
-                        Logger.w(TAG, "Failed to set executable with Java API, trying chmod")
-                        try {
-                            val chmodProcess = Runtime.getRuntime().exec("chmod 755 ${targetFile.absolutePath}")
-                            val exitCode = chmodProcess.waitFor()
-                            success = (exitCode == 0)
-                            if (success) {
-                                Logger.i(TAG, "Set executable permission using chmod")
-                            } else {
-                                Logger.w(TAG, "chmod failed with exit code: $exitCode")
-                            }
-                        } catch (e: Exception) {
-                            Logger.w(TAG, "Failed to execute chmod: ${e.message}")
-                        }
-                    } else {
-                        Logger.i(TAG, "Set executable permission using Java API")
-                    }
-                    
-                    // Verify the copy
-                    val canExecute = targetFile.canExecute()
-                    Logger.i(TAG, "Copied iperf3 binary to: ${targetFile.absolutePath}")
-                    Logger.i(TAG, "Target file size: ${targetFile.length()} bytes")
-                    Logger.i(TAG, "Executable permission: $canExecute")
-                    
-                    if (targetFile.exists() && targetFile.length() > 0) {
-                        actualBinaryPath = targetFile.absolutePath
-                        Logger.i(TAG, "Successfully copied iperf3 binary from jniLibs to ${targetDir.name}")
-                        return true
-                    }
-                    
-                } catch (e: Exception) {
-                    Logger.w(TAG, "Failed to copy to ${targetFile.absolutePath}: ${e.message}")
-                    continue
-                }
-            }
-            
-            Logger.e(TAG, "Failed to copy iperf3 binary to any private directory")
-            return false
-            
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to copy from jniLibs", e)
-            return false
-        }
-    }
     
     private fun extractIperf3Binary(): Boolean {
         Logger.d(TAG, "Attempting to extract iperf3 binary from assets")
@@ -575,16 +366,19 @@ class IperfEngineImpl(
             val hasIperf3Asset = try {
                 assetManager.open(IPERF3_BINARY).use { true }
             } catch (e: java.io.FileNotFoundException) {
-                Logger.i(TAG, "iperf3 binary not found in assets (expected when using jniLibs)")
-                false
+                Logger.e(TAG, "iperf3 binary not found in assets")
+                return false
             }
             
             if (!hasIperf3Asset) {
-                Logger.i(TAG, "No iperf3 binary in assets, this is expected when using jniLibs approach")
+                Logger.e(TAG, "No iperf3 binary in assets")
                 return false
             }
+            
+            Logger.i(TAG, "Found iperf3 binary in assets, extracting...")
+            
         } catch (e: Exception) {
-            Logger.w(TAG, "Failed to check assets: ${e.message}")
+            Logger.e(TAG, "Failed to check assets", e)
             return false
         }
         
