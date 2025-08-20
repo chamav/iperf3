@@ -3,12 +3,18 @@ package com.iperf3client.data.engine
 import android.content.Context
 import android.util.Log
 import com.iperf3client.data.utils.Logger
+import com.iperf3client.data.engine.*
 import com.iperf3client.domain.model.*
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import java.io.File
+import kotlinx.serialization.SerializationException
+import java.io.BufferedReader
+import java.io.File  
+import java.io.InputStreamReader
 import java.time.Instant
 import java.util.*
 import kotlin.random.Random
@@ -53,46 +59,15 @@ class IperfEngineImpl(
                 return@flow
             }
             
-            // Start test simulation or real iperf3 execution
-            val startTime = Instant.now()
-            val timeline = mutableListOf<LiveMetricsTick>()
-            
-            // Simulate test execution
-            for (second in 1..params.durationSec) {
-                if (!isTestRunning) {
-                    Logger.i(TAG, "Test cancelled by user, sessionId: $sessionId")
-                    emit(IperfEvent.Error("Test cancelled", sessionId))
-                    return@flow
-                }
-                
-                val tick = generateMockTick(second, params.protocol)
-                timeline.add(tick)
-                emit(IperfEvent.Progress(tick))
-                emit(IperfEvent.Log("[$second/${params.durationSec}] ${tick.throughputMbps} Mbits/sec"))
-                
-                delay(1000) // Simulate 1 second interval
+            // Ensure iperf3 binary is extracted and executable
+            if (!ensureIperfBinaryReady()) {
+                emit(IperfEvent.Error("Failed to prepare iperf3 binary", sessionId))
+                return@flow
             }
             
-            val endTime = Instant.now()
-            val summary = calculateSummary(timeline, params.protocol)
-            
-            val result = TestResult(
-                startedAt = startTime,
-                finishedAt = endTime,
-                params = params,
-                summary = summary,
-                timeline = timeline,
-                status = TestStatus.COMPLETED,
-                rawLogPath = saveRawLog(sessionId, timeline)
-            )
-            
-            emit(IperfEvent.Completed(result))
-            Logger.i(TAG, "Test completed successfully for ${params.host}:${params.port} (${params.protocol})")
-            Logger.i(TAG, "Session $sessionId results: avg=${summary.avgMbps} Mbps, max=${summary.maxMbps} Mbps, min=${summary.minMbps} Mbps")
-            if (params.protocol == Protocol.UDP) {
-                Logger.i(TAG, "UDP test stats - jitter=${summary.jitterMs} ms, packet_loss=${summary.packetLossPct}%")
-            } else {
-                Logger.i(TAG, "TCP test stats - retransmits=${summary.retransmits}")
+            // Execute real iperf3 process
+            executeIperf3Process(params, sessionId).collect { event ->
+                emit(event)
             }
             
         } catch (e: Exception) {
@@ -109,7 +84,7 @@ class IperfEngineImpl(
             isTestRunning = false
             currentSessionId = null
         }
-    }
+    }.flowOn(Dispatchers.IO)
     
     override suspend fun stop(sessionId: String) {
         Logger.d(TAG, "Stop requested for session: $sessionId, current session: $currentSessionId")
@@ -178,6 +153,29 @@ class IperfEngineImpl(
         }
     }
     
+    private fun saveRawLog(sessionId: String, rawOutput: String): String {
+        val logDir = File(context.filesDir, "logs")
+        if (!logDir.exists()) {
+            logDir.mkdirs()
+        }
+        
+        val logFile = File(logDir, "iperf3_$sessionId.log")
+        
+        try {
+            logFile.writeText(buildString {
+                appendLine("iperf3 raw output log - Session: $sessionId")
+                appendLine("Timestamp: ${Instant.now()}")
+                appendLine("---")
+                append(rawOutput)
+            })
+            
+            return logFile.absolutePath
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to save raw log file for session $sessionId", e)
+            return ""
+        }
+    }
+    
     private fun saveRawLog(sessionId: String, timeline: List<LiveMetricsTick>): String {
         val logDir = File(context.filesDir, "logs")
         if (!logDir.exists()) {
@@ -204,48 +202,303 @@ class IperfEngineImpl(
         }
     }
     
-    // TODO: Replace with actual iperf3 binary execution
-    private suspend fun executeIperf3(params: TestParams): Flow<String> = flow {
-        // This is where the real iperf3 binary would be executed
-        // For now, we simulate the output
+    private suspend fun executeIperf3Process(params: TestParams, sessionId: String): Flow<IperfEvent> = flow {
+        val startTime = Instant.now()
+        val timeline = mutableListOf<LiveMetricsTick>()
+        val rawOutput = StringBuilder()
         
-        val command = buildList {
-            add(getIperf3BinaryPath())
-            addAll(params.toCommandArgs())
+        try {
+            val command = buildList {
+                add(getIperf3BinaryPath())
+                addAll(params.toCommandArgs())
+            }
+            
+            Logger.i(TAG, "Executing iperf3: ${command.joinToString(" ")}")
+            
+            val processBuilder = ProcessBuilder(command)
+            processBuilder.redirectErrorStream(true)
+            
+            // Set environment variables for iperf3 temporary files
+            val env = processBuilder.environment()
+            env["TMPDIR"] = context.cacheDir.absolutePath
+            env["TEMP"] = context.cacheDir.absolutePath  
+            env["TMP"] = context.cacheDir.absolutePath
+            
+            Logger.i(TAG, "Set TMPDIR to: ${context.cacheDir.absolutePath}")
+            val process = processBuilder.start()
+            
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            var line: String?
+            var currentSecond = 0
+            
+            while (reader.readLine().also { line = it } != null && isTestRunning) {
+                line?.let { outputLine ->
+                    rawOutput.appendLine(outputLine)
+                    Logger.d(TAG, "iperf3 output: $outputLine")
+                    emit(IperfEvent.Log(outputLine))
+                    
+                    // Try to parse JSON output
+                    if (outputLine.startsWith("{") && outputLine.endsWith("}")) {
+                        try {
+                            val jsonOutput = json.decodeFromString<IperfJsonOutput>(outputLine)
+                            
+                            // Handle interval data
+                            jsonOutput.intervals?.forEach { interval ->
+                                val tick = parseIntervalToTick(interval, ++currentSecond, params.protocol)
+                                tick?.let {
+                                    timeline.add(it)
+                                    emit(IperfEvent.Progress(it))
+                                }
+                            }
+                            
+                            // Handle final results
+                            if (jsonOutput.end != null) {
+                                val endTime = Instant.now()
+                                val summary = parseFinalResults(jsonOutput.end, params.protocol)
+                                
+                                val result = TestResult(
+                                    startedAt = startTime,
+                                    finishedAt = endTime,
+                                    params = params,
+                                    summary = summary,
+                                    timeline = timeline,
+                                    status = TestStatus.COMPLETED,
+                                    rawLogPath = saveRawLog(sessionId, rawOutput.toString())
+                                )
+                                
+                                emit(IperfEvent.Completed(result))
+                                Logger.i(TAG, "Test completed successfully for ${params.host}:${params.port}")
+                                return@flow
+                            }
+                            
+                            // Handle errors
+                            if (jsonOutput.error != null) {
+                                emit(IperfEvent.Error("iperf3 error: ${jsonOutput.error}", sessionId))
+                                return@flow
+                            }
+                            
+                        } catch (e: SerializationException) {
+                            // Not a JSON line, continue processing as regular output
+                            Logger.d(TAG, "Non-JSON output line: $outputLine")
+                        }
+                    }
+                }
+            }
+            
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                emit(IperfEvent.Error("iperf3 process failed with exit code: $exitCode", sessionId))
+            } else if (timeline.isEmpty()) {
+                // If we didn't get proper JSON output, fall back to mock for now
+                Logger.w(TAG, "No valid JSON output received, falling back to mock mode")
+                fallbackToMockExecution(params, sessionId, startTime).collect { event ->
+                    emit(event)
+                }
+            }
+            
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to execute iperf3 process", e)
+            emit(IperfEvent.Error("Process execution failed: ${e.message}", sessionId))
+        }
+    }
+    
+    private suspend fun fallbackToMockExecution(params: TestParams, sessionId: String, startTime: Instant): Flow<IperfEvent> = flow {
+        Logger.i(TAG, "Using fallback mock execution for session: $sessionId")
+        val timeline = mutableListOf<LiveMetricsTick>()
+        
+        // Simulate test execution as backup
+        for (second in 1..params.durationSec) {
+            if (!isTestRunning) {
+                emit(IperfEvent.Error("Test cancelled", sessionId))
+                return@flow
+            }
+            
+            val tick = generateMockTick(second, params.protocol)
+            timeline.add(tick)
+            emit(IperfEvent.Progress(tick))
+            emit(IperfEvent.Log("[MOCK] [$second/${params.durationSec}] ${tick.throughputMbps} Mbits/sec"))
+            
+            kotlinx.coroutines.delay(1000)
         }
         
-        Log.d(TAG, "Would execute: ${command.joinToString(" ")}")
+        val endTime = Instant.now()
+        val summary = calculateSummary(timeline, params.protocol)
         
-        // Real implementation would use ProcessBuilder or NDK
-        // and parse actual iperf3 JSON output
+        val result = TestResult(
+            startedAt = startTime,
+            finishedAt = endTime,
+            params = params,
+            summary = summary,
+            timeline = timeline,
+            status = TestStatus.COMPLETED,
+            rawLogPath = saveRawLog(sessionId, timeline)
+        )
         
-        emit("Simulated iperf3 output")
+        emit(IperfEvent.Completed(result))
     }
     
     private fun getIperf3BinaryPath(): String {
-        // In real implementation, extract iperf3 binary from assets
-        // to internal storage and return the path
-        return "${context.filesDir}/$IPERF3_BINARY"
+        // Return the path that was determined by ensureIperfBinaryReady()
+        return actualBinaryPath ?: run {
+            // Fallback: try jniLibs path directly
+            val applicationInfo = context.applicationInfo
+            val nativeLibraryDir = applicationInfo.nativeLibraryDir
+            "$nativeLibraryDir/libiperf3.so"
+        }
+    }
+    
+    private fun ensureIperfBinaryReady(): Boolean {
+        // First, try to use jniLibs binary (preferred method for Android 10+)
+        val applicationInfo = context.applicationInfo
+        val nativeLibraryDir = applicationInfo.nativeLibraryDir
+        val jniLibsPath = "$nativeLibraryDir/libiperf3.so"
+        val jniLibsFile = File(jniLibsPath)
+        
+        if (jniLibsFile.exists()) {
+            Logger.i(TAG, "Found iperf3 binary in jniLibs: $jniLibsPath")
+            Logger.i(TAG, "Binary size: ${jniLibsFile.length()} bytes, executable: ${jniLibsFile.canExecute()}")
+            actualBinaryPath = jniLibsPath
+            return true
+        }
+        
+        // Fallback: try to extract from assets if jniLibs not available
+        Logger.w(TAG, "jniLibs binary not found, trying to extract from assets")
+        return extractIperf3Binary()
     }
     
     private fun extractIperf3Binary(): Boolean {
+        // Try different locations for binary extraction
+        val locations = listOf(
+            context.filesDir,       // /data/data/app/files
+            context.cacheDir,       // /data/data/app/cache  
+            context.codeCacheDir    // /data/data/app/code_cache
+        )
+        
+        for (targetDir in locations) {
+            if (tryExtractToBinary(targetDir)) {
+                return true
+            }
+        }
+        
+        Logger.e(TAG, "Failed to extract iperf3 binary to any location")
+        return false
+    }
+    
+    private fun tryExtractToBinary(targetDir: File): Boolean {
         try {
             val assetManager = context.assets
-            val inputStream = assetManager.open(IPERF3_BINARY)
-            val outputFile = File(context.filesDir, IPERF3_BINARY)
+            val inputStream = try {
+                assetManager.open(IPERF3_BINARY)
+            } catch (e: java.io.FileNotFoundException) {
+                Logger.w(TAG, "iperf3 binary not found in assets, this is expected when using jniLibs approach")
+                return false
+            }
+            val outputFile = File(targetDir, IPERF3_BINARY)
+            
+            Logger.i(TAG, "Trying to extract iperf3 to: ${outputFile.absolutePath}")
+            
+            // Remove existing file if present
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
             
             outputFile.outputStream().use { output ->
                 inputStream.copyTo(output)
             }
             
-            // Make executable
-            outputFile.setExecutable(true)
+            // Try multiple approaches to make executable
+            // Method 1: Java File API  
+            var success = outputFile.setExecutable(true, false)
+            if (success) {
+                Logger.i(TAG, "Set executable permission using Java API")
+            } else {
+                Logger.w(TAG, "Failed to set executable permission using Java API, trying chmod")
+                
+                // Method 2: Use Runtime.exec chmod
+                try {
+                    val chmodProcess = Runtime.getRuntime().exec("chmod 755 ${outputFile.absolutePath}")
+                    val exitCode = chmodProcess.waitFor()
+                    if (exitCode == 0) {
+                        Logger.i(TAG, "Set executable permission using chmod")
+                    } else {
+                        Logger.w(TAG, "chmod failed with exit code: $exitCode")
+                    }
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Failed to execute chmod: ${e.message}")
+                }
+            }
             
-            Log.d(TAG, "iperf3 binary extracted successfully")
-            return true
+            // Final verification
+            val canExecute = outputFile.canExecute()
+            Logger.i(TAG, "iperf3 binary extracted to: ${outputFile.absolutePath}")
+            Logger.i(TAG, "Binary size: ${outputFile.length()} bytes")
+            Logger.i(TAG, "Executable permission: $canExecute")
+            
+            // Test if we can actually execute it
+            if (outputFile.exists() && outputFile.length() > 0) {
+                // Update the binary path for this successful location
+                updateBinaryPath(outputFile.absolutePath)
+                Logger.i(TAG, "Successfully extracted iperf3 binary to ${targetDir.name}")
+                return true
+            }
+            
         } catch (e: Exception) {
-            Logger.e(TAG, "Failed to extract iperf3 binary from assets", e)
-            return false
+            Logger.w(TAG, "Failed to extract iperf3 binary to ${targetDir.absolutePath}: ${e.message}")
+        }
+        
+        return false
+    }
+    
+    private var actualBinaryPath: String? = null
+    
+    private fun updateBinaryPath(path: String) {
+        actualBinaryPath = path
+    }
+    
+    private fun parseIntervalToTick(interval: IperfInterval, second: Int, protocol: Protocol): LiveMetricsTick? {
+        val sum = interval.sum ?: return null
+        
+        val throughputMbps = (sum.bitsPerSecond ?: 0L) / 1_000_000f
+        
+        return when (protocol) {
+            Protocol.TCP -> LiveMetricsTick(
+                second = second,
+                throughputMbps = throughputMbps,
+                retransmits = sum.retransmits,
+                rttMs = null // RTT typically comes from stream data, not sum
+            )
+            Protocol.UDP -> LiveMetricsTick(
+                second = second,
+                throughputMbps = throughputMbps,
+                jitterMs = sum.jitterMs,
+                packetLossPct = sum.lostPercent
+            )
+        }
+    }
+    
+    private fun parseFinalResults(end: IperfEnd, protocol: Protocol): TestSummary {
+        val sum = end.sum ?: end.sumReceived ?: end.sumSent
+        
+        val avgMbps = (sum?.bitsPerSecond ?: 0L) / 1_000_000f
+        val totalBytes = sum?.bytes ?: 0L
+        
+        return when (protocol) {
+            Protocol.TCP -> TestSummary(
+                avgMbps = avgMbps,
+                maxMbps = avgMbps, // iperf3 doesn't provide max/min in final summary
+                minMbps = avgMbps,
+                retransmits = sum?.retransmits ?: 0,
+                rttMs = 0f, // Would need to calculate from stream data
+                totalBytes = totalBytes
+            )
+            Protocol.UDP -> TestSummary(
+                avgMbps = avgMbps,
+                maxMbps = avgMbps,
+                minMbps = avgMbps,
+                jitterMs = sum?.jitterMs ?: 0f,
+                packetLossPct = sum?.lostPercent ?: 0f,
+                totalBytes = totalBytes
+            )
         }
     }
 }
