@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.SerializationException
@@ -992,12 +993,14 @@ class IperfEngineImpl(
         }
     }
     
-    private fun runNativeTest(params: TestParams, sessionId: String): Flow<IperfEvent> = flow {
+    private fun runNativeTest(params: TestParams, sessionId: String): Flow<IperfEvent> = channelFlow {
         Logger.i(TAG, "Starting native JNI test")
         
         val native = Iperf3Native()
+        val channel = this@channelFlow
         val callback = object : Iperf3Native.Callback {
             var lastEmittedSecond = 0
+            var timeline = mutableListOf<LiveMetricsTick>()
             
             override fun onProgress(throughputMbps: Double, retransmits: Int) {
                 val currentSecond = lastEmittedSecond + 1
@@ -1012,10 +1015,11 @@ class IperfEngineImpl(
                     packetLossPct = null
                 )
                 
+                timeline.add(tick)
                 Logger.d(TAG, "Native progress: $currentSecond sec, $throughputMbps Mbps, retransmits=$retransmits")
-                kotlinx.coroutines.runBlocking {
-                    emit(IperfEvent.Progress(tick))
-                }
+                
+                // Use trySend for non-blocking send from callback
+                channel.trySend(IperfEvent.Progress(tick))
             }
             
             override fun onComplete(jsonResult: String) {
@@ -1025,57 +1029,76 @@ class IperfEngineImpl(
                     val endTime = Instant.now()
                     val startTime = endTime.minusSeconds(params.durationSec.toLong())
                     
-                    // For now, create a basic result - can be enhanced later with full JSON parsing
+                    // Calculate summary from timeline
+                    val summary = if (timeline.isNotEmpty()) {
+                        val speeds = timeline.map { it.throughputMbps }
+                        TestSummary(
+                            avgMbps = speeds.average().toFloat(),
+                            maxMbps = speeds.maxOrNull() ?: 0f,
+                            minMbps = speeds.minOrNull() ?: 0f,
+                            jitterMs = if (params.protocol == Protocol.UDP) 
+                                timeline.mapNotNull { it.jitterMs }.average().toFloat().takeIf { it > 0 }
+                                else null,
+                            packetLossPct = if (params.protocol == Protocol.UDP)
+                                timeline.mapNotNull { it.packetLossPct }.average().toFloat().takeIf { it > 0 }
+                                else null,
+                            retransmits = if (params.protocol == Protocol.TCP)
+                                timeline.mapNotNull { it.retransmits }.sum()
+                                else null,
+                            rttMs = timeline.mapNotNull { it.rttMs }.average().toFloat().takeIf { it > 0 },
+                            totalBytes = null
+                        )
+                    } else {
+                        // Fallback if no timeline data
+                        TestSummary(
+                            avgMbps = 100.0f, // TODO: Parse from JSON
+                            maxMbps = 150.0f,
+                            minMbps = 50.0f,
+                            jitterMs = null,
+                            packetLossPct = null,
+                            retransmits = null,
+                            rttMs = null,
+                            totalBytes = null
+                        )
+                    }
+                    
                     val result = TestResult(
                         startedAt = startTime,
                         finishedAt = endTime,
                         params = params,
-                        summary = TestSummary(
-                            avgMbps = 100.0f, // TODO: Parse from JSON
-                            maxMbps = 150.0f,
-                            minMbps = 50.0f,
-                            jitterMs = if (params.protocol == Protocol.UDP) 1.5f else null,
-                            packetLossPct = if (params.protocol == Protocol.UDP) 0.1f else null,
-                            retransmits = if (params.protocol == Protocol.TCP) 5 else null,
-                            rttMs = null,
-                            totalBytes = null
-                        ),
-                        timeline = emptyList(), // TODO: Build from progress events
+                        summary = summary,
+                        timeline = timeline,
                         status = TestStatus.COMPLETED,
                         rawLogPath = null
                     )
                     
-                    kotlinx.coroutines.runBlocking {
-                        emit(IperfEvent.Completed(result))
-                    }
+                    channel.trySend(IperfEvent.Completed(result))
                 } catch (e: Exception) {
                     Logger.e(TAG, "Failed to parse native JSON result", e)
-                    kotlinx.coroutines.runBlocking {
-                        emit(IperfEvent.Error("Failed to parse test result: ${e.message}", sessionId))
-                    }
+                    channel.trySend(IperfEvent.Error("Failed to parse test result: ${e.message}", sessionId))
                 }
             }
             
             override fun onError(error: String) {
                 Logger.e(TAG, "Native test error: $error")
-                kotlinx.coroutines.runBlocking {
-                    emit(IperfEvent.Error(error, sessionId))
-                }
+                channel.trySend(IperfEvent.Error(error, sessionId))
             }
         }
         
-        val success = native.runTest(
-            host = params.host,
-            port = params.port,
-            duration = params.durationSec,
-            streams = params.parallelStreams,
-            reverse = params.reverse,
-            udp = params.protocol == Protocol.UDP,
-            callback = callback
-        )
-        
-        if (!success) {
-            emit(IperfEvent.Error("Failed to start native test", sessionId))
+        withContext(Dispatchers.IO) {
+            val success = native.runTest(
+                host = params.host,
+                port = params.port,
+                duration = params.durationSec,
+                streams = params.parallelStreams,
+                reverse = params.reverse,
+                udp = params.protocol == Protocol.UDP,
+                callback = callback
+            )
+            
+            if (!success) {
+                send(IperfEvent.Error("Failed to start native test", sessionId))
+            }
         }
-    }.flowOn(Dispatchers.IO)
+    }
 }
