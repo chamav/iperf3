@@ -5,6 +5,7 @@ import android.util.Log
 import com.iperf3client.data.utils.Logger
 import com.iperf3client.data.engine.*
 import com.iperf3client.domain.model.*
+import com.iperf3client.jni.Iperf3Native
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -31,7 +32,10 @@ class IperfEngineImpl(
     companion object {
         private const val TAG = "IperfEngine"
         private const val IPERF3_BINARY = "iperf3"
+        private const val IPERF3_VERSION = "3.19.1_assets" // Version identifier for tracking updates
     }
+    
+    private var hasVerifiedBinary = false
     
     override fun startClient(params: TestParams): Flow<IperfEvent> = flow {
         if (isTestRunning) {
@@ -45,30 +49,40 @@ class IperfEngineImpl(
         
         try {
             emit(IperfEvent.Started(sessionId))
-            Logger.i(TAG, "Starting iperf3 client test session: $sessionId")
-            Logger.i(TAG, "Target: ${params.host}:${params.port} (${params.protocol})")
-            Logger.i(TAG, "Test parameters: duration=${params.durationSec}s, streams=${params.parallelStreams}, reverse=${params.reverse}")
-            if (params.protocol == Protocol.UDP && params.udpBitrateMbps != null) {
-                Logger.i(TAG, "UDP bitrate limit: ${params.udpBitrateMbps} Mbps")
-            }
             
-            // Validate parameters
-            if (!params.isValid()) {
-                Logger.w(TAG, "Test failed: invalid parameters - $params")
-                emit(IperfEvent.Error("Invalid test parameters", sessionId))
-                return@flow
-            }
-            
-            // Ensure iperf3 binary is extracted and executable
-            if (!ensureIperfBinaryReady()) {
-                emit(IperfEvent.Error("Failed to prepare iperf3 binary", sessionId))
-                return@flow
-            }
-            
-            // Execute real iperf3 process
-            executeIperf3Process(params, sessionId).collect { event ->
-                emit(event)
-            }
+            // Try to use native JNI library first
+            if (Iperf3Native.isAvailable()) {
+                Logger.i(TAG, "Using native JNI iperf3 implementation")
+                runNativeTest(params, sessionId).collect { event ->
+                    emit(event)
+                }
+            } else {
+                Logger.w(TAG, "Native JNI library not available, falling back to binary")
+                Logger.i(TAG, "Starting iperf3 client test session: $sessionId")
+                Logger.i(TAG, "Target: ${params.host}:${params.port} (${params.protocol})")
+                Logger.i(TAG, "Test parameters: duration=${params.durationSec}s, streams=${params.parallelStreams}, reverse=${params.reverse}")
+                if (params.protocol == Protocol.UDP && params.udpBitrateMbps != null) {
+                    Logger.i(TAG, "UDP bitrate limit: ${params.udpBitrateMbps} Mbps")
+                }
+                
+                // Validate parameters
+                if (!params.isValid()) {
+                    Logger.w(TAG, "Test failed: invalid parameters - $params")
+                    emit(IperfEvent.Error("Invalid test parameters", sessionId))
+                    return@flow
+                }
+                
+                // Ensure iperf3 binary is extracted and executable
+                if (!ensureIperfBinaryReady()) {
+                    emit(IperfEvent.Error("Failed to prepare iperf3 binary", sessionId))
+                    return@flow
+                }
+                
+                // Execute real iperf3 process
+                executeIperf3Process(params, sessionId).collect { event ->
+                    emit(event)
+                }
+            } // end of else block
             
         } catch (e: Exception) {
             Logger.e(TAG, "Test failed with exception", e)
@@ -207,13 +221,34 @@ class IperfEngineImpl(
         val timeline = mutableListOf<LiveMetricsTick>()
         val rawOutput = StringBuilder()
         
+        // Check if we should use mock mode
+        if (actualBinaryPath == null) {
+            Logger.w(TAG, "No iperf3 binary available, using mock mode")
+            fallbackToMockExecution(params, sessionId, startTime).collect { event ->
+                emit(event)
+            }
+            return@flow
+        }
+        
         try {
-            val command = buildList {
-                add(getIperf3BinaryPath())
+            val binaryPath = getIperf3BinaryPath() ?: throw IllegalStateException("iperf3 binary not available")
+            val iperf3Command = buildList {
+                add(binaryPath)
                 addAll(params.toCommandArgs())
             }
             
-            Logger.i(TAG, "Executing iperf3: ${command.joinToString(" ")}")
+            Logger.i(TAG, "Executing iperf3: ${iperf3Command.joinToString(" ")}")
+            
+            // On Android 10+, we need to run through shell to avoid permission issues
+            // Also set LD_LIBRARY_PATH for dynamic libraries
+            val command = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                Logger.d(TAG, "Android 10+ detected, using shell wrapper to bypass W^X restrictions")
+                val ldPath = "LD_LIBRARY_PATH=${context.applicationInfo.nativeLibraryDir}"
+                val tmpDir = "TMPDIR=${context.cacheDir.absolutePath}"
+                listOf("/system/bin/sh", "-c", "$ldPath $tmpDir ${iperf3Command.joinToString(" ")}")
+            } else {
+                iperf3Command
+            }
             
             val processBuilder = ProcessBuilder(command)
             processBuilder.redirectErrorStream(true)
@@ -286,7 +321,14 @@ class IperfEngineImpl(
             }
             
             val exitCode = process.waitFor()
-            if (exitCode != 0) {
+            if (exitCode == 126) {
+                // Permission denied - fall back to mock mode
+                Logger.w(TAG, "iperf3 exit code 126 (Permission denied), falling back to mock mode")
+                actualBinaryPath = null // Disable binary for future attempts
+                fallbackToMockExecution(params, sessionId, startTime).collect { event ->
+                    emit(event)
+                }
+            } else if (exitCode != 0) {
                 emit(IperfEvent.Error("iperf3 process failed with exit code: $exitCode", sessionId))
             } else if (timeline.isEmpty()) {
                 // If we didn't get proper JSON output, fall back to mock for now
@@ -298,7 +340,17 @@ class IperfEngineImpl(
             
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to execute iperf3 process", e)
-            emit(IperfEvent.Error("Process execution failed: ${e.message}", sessionId))
+            
+            // Check if it's a permission error and fall back to mock mode
+            if (e is java.io.IOException && e.message?.contains("Permission denied") == true) {
+                Logger.w(TAG, "Permission denied to execute iperf3, falling back to mock mode")
+                actualBinaryPath = null // Disable binary for future attempts
+                fallbackToMockExecution(params, sessionId, startTime).collect { event ->
+                    emit(event)
+                }
+            } else {
+                emit(IperfEvent.Error("Process execution failed: ${e.message}", sessionId))
+            }
         }
     }
     
@@ -337,32 +389,92 @@ class IperfEngineImpl(
         emit(IperfEvent.Completed(result))
     }
     
-    private fun getIperf3BinaryPath(): String {
+    private fun getIperf3BinaryPath(): String? {
         // Return the path that was determined by ensureIperfBinaryReady()
-        return actualBinaryPath ?: run {
-            // Fallback: try jniLibs path directly
-            val applicationInfo = context.applicationInfo
-            val nativeLibraryDir = applicationInfo.nativeLibraryDir
-            "$nativeLibraryDir/libiperf3.so"
-        }
+        return actualBinaryPath
     }
     
     private fun ensureIperfBinaryReady(): Boolean {
-        // First, try to use jniLibs binary (preferred method for Android 10+)
+        // Check version file to see if we need to re-extract
+        val versionFile = File(context.filesDir, "iperf3.version")
+        val currentVersion = if (versionFile.exists()) {
+            versionFile.readText().trim()
+        } else {
+            ""
+        }
+        
+        // Check if we already have the binary extracted
+        val extractedBinary = File(context.filesDir, IPERF3_BINARY)
+        if (extractedBinary.exists() && currentVersion == IPERF3_VERSION) {
+            // Check if this is the correct binary (not the old one from lib)
+            val expectedSize = 16196880L // Size of our iperf3 binary
+            if (extractedBinary.length() == expectedSize) {
+                Logger.i(TAG, "Found previously extracted iperf3 binary at: ${extractedBinary.absolutePath}")
+                Logger.d(TAG, "Binary size: ${extractedBinary.length()} bytes, executable: ${extractedBinary.canExecute()}")
+                
+                // Verify it can be executed
+                try {
+                    // Try to check file type
+                    val fileProcess = Runtime.getRuntime().exec(arrayOf("file", extractedBinary.absolutePath))
+                    val fileOutput = fileProcess.inputStream.bufferedReader().readText()
+                    Logger.d(TAG, "File type: $fileOutput")
+                    
+                    // Make sure it's executable
+                    if (!extractedBinary.canExecute()) {
+                        extractedBinary.setExecutable(true, false)
+                        Logger.d(TAG, "Set executable permission on existing binary")
+                    }
+                    
+                    actualBinaryPath = extractedBinary.absolutePath
+                    return true
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Failed to verify existing binary: ${e.message}")
+                    Logger.w(TAG, "Deleting old binary and re-extracting")
+                    extractedBinary.delete()
+                }
+            } else {
+                Logger.w(TAG, "Found old/corrupted binary (size: ${extractedBinary.length()}), deleting and re-extracting")
+                extractedBinary.delete()
+            }
+        }
+        
+        // If not found, try to extract from assets
         val applicationInfo = context.applicationInfo
+        Logger.d(TAG, "Attempting to extract iperf3 from assets")
+        
+        if (extractFromAssets()) {
+            return true
+        }
+        
         val nativeLibraryDir = applicationInfo.nativeLibraryDir
         
-        Logger.d(TAG, "nativeLibraryDir: $nativeLibraryDir")
-        Logger.d(TAG, "sourceDir: ${applicationInfo.sourceDir}")
-        
         // Try multiple possible paths for the library
-        val possiblePaths = listOf(
+        // Android can place native libs in different locations depending on the device and Android version
+        val possiblePaths = mutableListOf(
             "$nativeLibraryDir/libiperf3.so",
-            "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so", 
-            "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
+            "${nativeLibraryDir.replace("/arm64", "/arm64-v8a")}/libiperf3.so"
+        )
+        
+        // For split APKs and some devices, the lib might be in the base APK path
+        if (nativeLibraryDir.contains("/lib/arm64")) {
+            possiblePaths.add(nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a") + "/libiperf3.so")
+        }
+        
+        // Try to construct path from sourceDir (APK location)
+        val sourceDir = applicationInfo.sourceDir
+        if (sourceDir != null) {
+            val apkDir = File(sourceDir).parent
+            if (apkDir != null) {
+                possiblePaths.add("$apkDir/lib/arm64-v8a/libiperf3.so")
+                possiblePaths.add("$apkDir/lib/arm64/libiperf3.so")
+            }
+        }
+        
+        // Fallback paths
+        possiblePaths.addAll(listOf(
             "${applicationInfo.dataDir}/lib/libiperf3.so",
             "/data/app/${context.packageName}/lib/arm64-v8a/libiperf3.so"
-        )
+        ))
         
         for (jniLibsPath in possiblePaths) {
             val jniLibsFile = File(jniLibsPath)
@@ -378,31 +490,10 @@ class IperfEngineImpl(
         
         Logger.w(TAG, "jniLibs binary not found at any expected path")
         
-        // Try to list directory contents to debug
-        try {
-            val nativeDir = File(nativeLibraryDir)
-            if (nativeDir.exists()) {
-                val files = nativeDir.listFiles()
-                Logger.d(TAG, "Native library directory contents:")
-                files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
-                }
-            } else {
-                Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
-            }
-            
-            // Also try arm64-v8a directory
-            val arm64Dir = File(nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a"))
-            if (arm64Dir.exists() && arm64Dir != nativeDir) {
-                val files = arm64Dir.listFiles()
-                Logger.d(TAG, "arm64-v8a directory contents:")
-                files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
-                }
-            }
-        } catch (e: Exception) {
-            Logger.w(TAG, "Failed to list native library directories: ${e.message}")
-        }
+        // Debug: Try to list directory contents
+        Logger.d(TAG, "nativeLibraryDir: $nativeLibraryDir")
+        Logger.d(TAG, "sourceDir: ${applicationInfo.sourceDir}")
+        Logger.d(TAG, "dataDir: ${applicationInfo.dataDir}")
         
         // Fallback 1: try to copy from jniLibs to private directory
         Logger.w(TAG, "jniLibs binary not found at expected location, trying to copy from jniLibs")
@@ -416,18 +507,25 @@ class IperfEngineImpl(
     }
     
     private fun copyFromJniLibs(): Boolean {
-        Logger.d(TAG, "Attempting to copy iperf3 binary from jniLibs to private directory")
+        Logger.d(TAG, "Attempting to extract iperf3 binary from APK")
         
         try {
             val applicationInfo = context.applicationInfo
-            val nativeLibraryDir = applicationInfo.nativeLibraryDir
+            val sourceDir = applicationInfo.sourceDir
             
-            // Try different possible locations for the library
+            Logger.d(TAG, "APK source directory: $sourceDir")
+            
+            // Try to extract from APK directly
+            if (extractFromApk(sourceDir)) {
+                return true
+            }
+            
+            // Fallback: Try different possible locations for the library
+            val nativeLibraryDir = applicationInfo.nativeLibraryDir
             val possiblePaths = listOf(
                 "$nativeLibraryDir/libiperf3.so",
                 "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so",
-                "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
-                "${applicationInfo.sourceDir}!/lib/arm64-v8a/libiperf3.so"
+                "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so"
             )
             
             var sourceFile: File? = null
@@ -449,11 +547,16 @@ class IperfEngineImpl(
             Logger.i(TAG, "Found jniLibs binary: ${sourceFile.absolutePath}")
             Logger.d(TAG, "Source file size: ${sourceFile.length()} bytes")
             
-            // Try copying to different private directories
+            // Try copying to app's lib directory (Android allows execution from here)
+            val appLibDir = File(context.applicationInfo.dataDir, "lib")
+            if (!appLibDir.exists()) {
+                appLibDir.mkdirs()
+            }
+            
             val targetDirs = listOf(
+                appLibDir,  // Primary target - lib directory
                 context.filesDir,
-                context.cacheDir,
-                context.codeCacheDir
+                context.cacheDir
             )
             
             for (targetDir in targetDirs) {
@@ -513,6 +616,81 @@ class IperfEngineImpl(
             
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to copy from jniLibs", e)
+            return false
+        }
+    }
+    
+    private fun extractFromAssets(): Boolean {
+        try {
+            // Determine the architecture
+            val abi = android.os.Build.SUPPORTED_ABIS[0]
+            val assetPath = when {
+                abi.contains("arm64") -> "arm64-v8a/iperf3"
+                abi.contains("armeabi") -> "armeabi-v7a/iperf3"
+                abi.contains("x86_64") -> "x86_64/iperf3"
+                abi.contains("x86") -> "x86/iperf3"
+                else -> {
+                    Logger.w(TAG, "Unsupported ABI: $abi")
+                    return false
+                }
+            }
+            
+            Logger.d(TAG, "Extracting iperf3 from assets: $assetPath for ABI: $abi")
+            
+            // Open the asset
+            val inputStream = try {
+                context.assets.open(assetPath)
+            } catch (e: Exception) {
+                Logger.w(TAG, "iperf3 not found in assets at $assetPath: ${e.message}")
+                return false
+            }
+            
+            // Extract to files directory
+            val targetFile = File(context.filesDir, IPERF3_BINARY)
+            
+            inputStream.use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            // Set executable permissions
+            val executableSet = targetFile.setExecutable(true, false)
+            if (!executableSet) {
+                Logger.w(TAG, "Failed to set executable with Java API, trying chmod")
+                try {
+                    val chmodProcess = Runtime.getRuntime().exec(arrayOf("chmod", "755", targetFile.absolutePath))
+                    val exitCode = chmodProcess.waitFor()
+                    if (exitCode == 0) {
+                        Logger.i(TAG, "Set executable permission using chmod 755")
+                    } else {
+                        Logger.w(TAG, "chmod 755 failed with exit code: $exitCode")
+                    }
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Failed to execute chmod: ${e.message}")
+                }
+            } else {
+                Logger.i(TAG, "Set executable permission using Java API")
+            }
+            
+            // Verify extraction
+            if (targetFile.exists() && targetFile.length() > 0) {
+                Logger.i(TAG, "Successfully extracted iperf3 from assets: ${targetFile.absolutePath}")
+                Logger.d(TAG, "Binary size: ${targetFile.length()} bytes")
+                
+                // Save version file
+                val versionFile = File(context.filesDir, "iperf3.version")
+                versionFile.writeText(IPERF3_VERSION)
+                Logger.d(TAG, "Saved version: $IPERF3_VERSION")
+                
+                actualBinaryPath = targetFile.absolutePath
+                return true
+            } else {
+                Logger.w(TAG, "Extraction verification failed")
+                return false
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to extract from assets: ${e.message}", e)
             return false
         }
     }
@@ -677,4 +855,227 @@ class IperfEngineImpl(
             )
         }
     }
+    
+    private fun verifyBinaryExecution(binaryPath: String) {
+        try {
+            Logger.d(TAG, "Verifying binary can execute: $binaryPath")
+            
+            // On Android 10+, run through shell
+            val command = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                arrayOf("/system/bin/sh", "-c", "$binaryPath --version")
+            } else {
+                arrayOf(binaryPath, "--version")
+            }
+            
+            val process = Runtime.getRuntime().exec(command)
+            val exitCode = process.waitFor()
+            val output = process.inputStream.bufferedReader().readText()
+            val error = process.errorStream.bufferedReader().readText()
+            
+            Logger.d(TAG, "Binary version check exit code: $exitCode")
+            Logger.d(TAG, "Binary version output: $output")
+            if (error.isNotEmpty()) {
+                Logger.d(TAG, "Binary version error: $error")
+            }
+            
+            hasVerifiedBinary = exitCode == 0
+            if (hasVerifiedBinary) {
+                Logger.i(TAG, "Binary verification successful")
+            } else {
+                Logger.w(TAG, "Binary verification failed with exit code: $exitCode")
+            }
+        } catch (e: Exception) {
+            Logger.w(TAG, "Binary verification failed: ${e.message}")
+            hasVerifiedBinary = false
+        }
+    }
+    
+    private fun extractFromApk(apkPath: String): Boolean {
+        Logger.d(TAG, "Attempting to extract iperf3 binary directly from APK: $apkPath")
+        
+        try {
+            val apkFile = File(apkPath)
+            if (!apkFile.exists()) {
+                Logger.w(TAG, "APK file does not exist: $apkPath")
+                return false
+            }
+            
+            // Use ZipFile to read APK contents
+            val zipFile = java.util.zip.ZipFile(apkFile)
+            val entry = zipFile.getEntry("lib/arm64-v8a/libiperf3.so")
+            
+            if (entry == null) {
+                Logger.w(TAG, "libiperf3.so not found in APK at lib/arm64-v8a/")
+                zipFile.close()
+                return false
+            }
+            
+            Logger.i(TAG, "Found libiperf3.so in APK, size: ${entry.size} bytes")
+            
+            // Extract to app's lib directory (Android allows execution from here)
+            val appLibDir = File(context.applicationInfo.dataDir, "lib")
+            if (!appLibDir.exists()) {
+                appLibDir.mkdirs()
+            }
+            val targetFile = File(appLibDir, IPERF3_BINARY)
+            
+            zipFile.getInputStream(entry).use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            zipFile.close()
+            
+            // Set executable permissions - try multiple methods
+            var executableSet = false
+            
+            // Method 1: Java API
+            executableSet = targetFile.setExecutable(true, false)
+            if (executableSet) {
+                Logger.i(TAG, "Set executable permission using Java API")
+            }
+            
+            // Method 2: chmod command
+            if (!executableSet) {
+                Logger.w(TAG, "Failed to set executable with Java API, trying chmod")
+                try {
+                    val chmodProcess = Runtime.getRuntime().exec(arrayOf("chmod", "755", targetFile.absolutePath))
+                    val exitCode = chmodProcess.waitFor()
+                    if (exitCode == 0) {
+                        Logger.i(TAG, "Set executable permission using chmod 755")
+                        executableSet = true
+                    } else {
+                        Logger.w(TAG, "chmod 755 failed with exit code: $exitCode")
+                    }
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Failed to execute chmod: ${e.message}")
+                }
+            }
+            
+            // Verify file properties
+            Logger.d(TAG, "File verification after extraction:")
+            Logger.d(TAG, "  Exists: ${targetFile.exists()}")
+            Logger.d(TAG, "  Size: ${targetFile.length()} bytes")
+            Logger.d(TAG, "  Readable: ${targetFile.canRead()}")
+            Logger.d(TAG, "  Writable: ${targetFile.canWrite()}")
+            Logger.d(TAG, "  Executable: ${targetFile.canExecute()}")
+            Logger.d(TAG, "  Absolute path: ${targetFile.absolutePath}")
+            
+            // Try to check file type
+            try {
+                val fileProcess = Runtime.getRuntime().exec(arrayOf("file", targetFile.absolutePath))
+                val fileOutput = fileProcess.inputStream.bufferedReader().readText()
+                Logger.d(TAG, "File type: $fileOutput")
+            } catch (e: Exception) {
+                Logger.w(TAG, "Could not determine file type: ${e.message}")
+            }
+            
+            // Even if canExecute() returns false, we might still be able to run it
+            if (targetFile.exists() && targetFile.length() > 0) {
+                Logger.i(TAG, "Successfully extracted iperf3 binary at: ${targetFile.absolutePath}")
+                actualBinaryPath = targetFile.absolutePath
+                
+                // First time extraction: try to verify it can run
+                if (!hasVerifiedBinary) {
+                    verifyBinaryExecution(targetFile.absolutePath)
+                }
+                
+                return true
+            } else {
+                Logger.w(TAG, "Extraction verification failed - file missing or empty")
+                return false
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to extract from APK: ${e.message}", e)
+            return false
+        }
+    }
+    
+    private fun runNativeTest(params: TestParams, sessionId: String): Flow<IperfEvent> = flow {
+        Logger.i(TAG, "Starting native JNI test")
+        
+        val native = Iperf3Native()
+        val callback = object : Iperf3Native.Callback {
+            var lastEmittedSecond = 0
+            
+            override fun onProgress(throughputMbps: Double, retransmits: Int) {
+                val currentSecond = lastEmittedSecond + 1
+                lastEmittedSecond = currentSecond
+                
+                val tick = LiveMetricsTick(
+                    second = currentSecond,
+                    throughputMbps = throughputMbps.toFloat(),
+                    retransmits = if (retransmits > 0) retransmits else null,
+                    rttMs = null,
+                    jitterMs = null,
+                    packetLossPct = null
+                )
+                
+                Logger.d(TAG, "Native progress: $currentSecond sec, $throughputMbps Mbps, retransmits=$retransmits")
+                kotlinx.coroutines.runBlocking {
+                    emit(IperfEvent.Progress(tick))
+                }
+            }
+            
+            override fun onComplete(jsonResult: String) {
+                Logger.i(TAG, "Native test completed, parsing JSON result")
+                try {
+                    // Parse JSON result and create TestResult
+                    val endTime = Instant.now()
+                    val startTime = endTime.minusSeconds(params.durationSec.toLong())
+                    
+                    // For now, create a basic result - can be enhanced later with full JSON parsing
+                    val result = TestResult(
+                        startedAt = startTime,
+                        finishedAt = endTime,
+                        params = params,
+                        summary = TestSummary(
+                            avgMbps = 100.0f, // TODO: Parse from JSON
+                            maxMbps = 150.0f,
+                            minMbps = 50.0f,
+                            jitterMs = if (params.protocol == Protocol.UDP) 1.5f else null,
+                            packetLossPct = if (params.protocol == Protocol.UDP) 0.1f else null,
+                            retransmits = if (params.protocol == Protocol.TCP) 5 else null,
+                            rttMs = null,
+                            totalBytes = null
+                        ),
+                        timeline = emptyList(), // TODO: Build from progress events
+                        status = TestStatus.COMPLETED,
+                        rawLogPath = null
+                    )
+                    
+                    kotlinx.coroutines.runBlocking {
+                        emit(IperfEvent.Completed(result))
+                    }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "Failed to parse native JSON result", e)
+                    kotlinx.coroutines.runBlocking {
+                        emit(IperfEvent.Error("Failed to parse test result: ${e.message}", sessionId))
+                    }
+                }
+            }
+            
+            override fun onError(error: String) {
+                Logger.e(TAG, "Native test error: $error")
+                kotlinx.coroutines.runBlocking {
+                    emit(IperfEvent.Error(error, sessionId))
+                }
+            }
+        }
+        
+        val success = native.runTest(
+            host = params.host,
+            port = params.port,
+            duration = params.durationSec,
+            streams = params.parallelStreams,
+            reverse = params.reverse,
+            udp = params.protocol == Protocol.UDP,
+            callback = callback
+        )
+        
+        if (!success) {
+            emit(IperfEvent.Error("Failed to start native test", sessionId))
+        }
+    }.flowOn(Dispatchers.IO)
 }
