@@ -351,54 +351,57 @@ class IperfEngineImpl(
         // First, try to use jniLibs binary (preferred method for Android 10+)
         val applicationInfo = context.applicationInfo
         val nativeLibraryDir = applicationInfo.nativeLibraryDir
-        val jniLibsPath = "$nativeLibraryDir/libiperf3.so"
-        val jniLibsFile = File(jniLibsPath)
         
-        Logger.d(TAG, "Checking for iperf3 binary at: $jniLibsPath")
         Logger.d(TAG, "nativeLibraryDir: $nativeLibraryDir")
+        Logger.d(TAG, "sourceDir: ${applicationInfo.sourceDir}")
         
-        if (jniLibsFile.exists()) {
-            Logger.i(TAG, "Found iperf3 binary in jniLibs: $jniLibsPath")
-            Logger.i(TAG, "Binary size: ${jniLibsFile.length()} bytes, executable: ${jniLibsFile.canExecute()}")
-            actualBinaryPath = jniLibsPath
-            return true
-        } else {
-            Logger.w(TAG, "jniLibs binary not found at expected path: $jniLibsPath")
+        // Try multiple possible paths for the library
+        val possiblePaths = listOf(
+            "$nativeLibraryDir/libiperf3.so",
+            "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so", 
+            "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
+            "${applicationInfo.dataDir}/lib/libiperf3.so",
+            "/data/app/${context.packageName}/lib/arm64-v8a/libiperf3.so"
+        )
+        
+        for (jniLibsPath in possiblePaths) {
+            val jniLibsFile = File(jniLibsPath)
+            Logger.d(TAG, "Checking for iperf3 binary at: $jniLibsPath")
             
-            // Try to list directory contents to debug
-            try {
-                val nativeDir = File(nativeLibraryDir)
-                if (nativeDir.exists()) {
-                    val files = nativeDir.listFiles()
-                    Logger.d(TAG, "Native library directory contents:")
-                    files?.forEach { file ->
-                        Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
-                    }
-                } else {
-                    Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
+            if (jniLibsFile.exists()) {
+                Logger.i(TAG, "Found iperf3 binary in jniLibs: $jniLibsPath")
+                Logger.i(TAG, "Binary size: ${jniLibsFile.length()} bytes, executable: ${jniLibsFile.canExecute()}")
+                actualBinaryPath = jniLibsPath
+                return true
+            }
+        }
+        
+        Logger.w(TAG, "jniLibs binary not found at any expected path")
+        
+        // Try to list directory contents to debug
+        try {
+            val nativeDir = File(nativeLibraryDir)
+            if (nativeDir.exists()) {
+                val files = nativeDir.listFiles()
+                Logger.d(TAG, "Native library directory contents:")
+                files?.forEach { file ->
+                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
                 }
-            } catch (e: Exception) {
-                Logger.w(TAG, "Failed to list native library directory: ${e.message}")
+            } else {
+                Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
             }
             
-            // Try alternative locations where Android might place the library
-            val alternativePaths = listOf(
-                "${nativeLibraryDir}/libiperf3.so",
-                "${applicationInfo.dataDir}/lib/libiperf3.so", 
-                "${context.applicationInfo.sourceDir}/../lib/arm64-v8a/libiperf3.so",
-                "/data/app/${context.packageName}/lib/arm64/libiperf3.so"
-            )
-            
-            for (altPath in alternativePaths) {
-                val altFile = File(altPath)
-                Logger.d(TAG, "Trying alternative path: $altPath")
-                if (altFile.exists()) {
-                    Logger.i(TAG, "Found iperf3 binary at alternative location: $altPath")
-                    Logger.i(TAG, "Binary size: ${altFile.length()} bytes, executable: ${altFile.canExecute()}")
-                    actualBinaryPath = altPath
-                    return true
+            // Also try arm64-v8a directory
+            val arm64Dir = File(nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a"))
+            if (arm64Dir.exists() && arm64Dir != nativeDir) {
+                val files = arm64Dir.listFiles()
+                Logger.d(TAG, "arm64-v8a directory contents:")
+                files?.forEach { file ->
+                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
                 }
             }
+        } catch (e: Exception) {
+            Logger.w(TAG, "Failed to list native library directories: ${e.message}")
         }
         
         // Fallback 1: try to copy from jniLibs to private directory
@@ -418,12 +421,28 @@ class IperfEngineImpl(
         try {
             val applicationInfo = context.applicationInfo
             val nativeLibraryDir = applicationInfo.nativeLibraryDir
-            val sourceFile = File("$nativeLibraryDir/libiperf3.so")
             
-            Logger.d(TAG, "Looking for jniLibs binary at: ${sourceFile.absolutePath}")
+            // Try different possible locations for the library
+            val possiblePaths = listOf(
+                "$nativeLibraryDir/libiperf3.so",
+                "$nativeLibraryDir/../lib/arm64-v8a/libiperf3.so",
+                "${nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a")}/libiperf3.so",
+                "${applicationInfo.sourceDir}!/lib/arm64-v8a/libiperf3.so"
+            )
             
-            if (!sourceFile.exists()) {
-                Logger.w(TAG, "Source file does not exist: ${sourceFile.absolutePath}")
+            var sourceFile: File? = null
+            for (path in possiblePaths) {
+                val testFile = File(path)
+                Logger.d(TAG, "Looking for jniLibs binary at: ${testFile.absolutePath}")
+                if (testFile.exists()) {
+                    sourceFile = testFile
+                    Logger.i(TAG, "Found jniLibs binary at: ${testFile.absolutePath}")
+                    break
+                }
+            }
+            
+            if (sourceFile == null) {
+                Logger.w(TAG, "Source file not found in any of the expected locations")
                 return false
             }
             
