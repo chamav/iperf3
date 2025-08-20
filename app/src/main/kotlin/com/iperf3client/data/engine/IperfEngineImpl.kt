@@ -354,11 +354,51 @@ class IperfEngineImpl(
         val jniLibsPath = "$nativeLibraryDir/libiperf3.so"
         val jniLibsFile = File(jniLibsPath)
         
+        Logger.d(TAG, "Checking for iperf3 binary at: $jniLibsPath")
+        Logger.d(TAG, "nativeLibraryDir: $nativeLibraryDir")
+        
         if (jniLibsFile.exists()) {
             Logger.i(TAG, "Found iperf3 binary in jniLibs: $jniLibsPath")
             Logger.i(TAG, "Binary size: ${jniLibsFile.length()} bytes, executable: ${jniLibsFile.canExecute()}")
             actualBinaryPath = jniLibsPath
             return true
+        } else {
+            Logger.w(TAG, "jniLibs binary not found at expected path: $jniLibsPath")
+            
+            // Try to list directory contents to debug
+            try {
+                val nativeDir = File(nativeLibraryDir)
+                if (nativeDir.exists()) {
+                    val files = nativeDir.listFiles()
+                    Logger.d(TAG, "Native library directory contents:")
+                    files?.forEach { file ->
+                        Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
+                    }
+                } else {
+                    Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
+                }
+            } catch (e: Exception) {
+                Logger.w(TAG, "Failed to list native library directory: ${e.message}")
+            }
+            
+            // Try alternative locations where Android might place the library
+            val alternativePaths = listOf(
+                "${nativeLibraryDir}/libiperf3.so",
+                "${applicationInfo.dataDir}/lib/libiperf3.so", 
+                "${context.applicationInfo.sourceDir}/../lib/arm64-v8a/libiperf3.so",
+                "/data/app/${context.packageName}/lib/arm64/libiperf3.so"
+            )
+            
+            for (altPath in alternativePaths) {
+                val altFile = File(altPath)
+                Logger.d(TAG, "Trying alternative path: $altPath")
+                if (altFile.exists()) {
+                    Logger.i(TAG, "Found iperf3 binary at alternative location: $altPath")
+                    Logger.i(TAG, "Binary size: ${altFile.length()} bytes, executable: ${altFile.canExecute()}")
+                    actualBinaryPath = altPath
+                    return true
+                }
+            }
         }
         
         // Fallback: try to extract from assets if jniLibs not available
@@ -367,6 +407,31 @@ class IperfEngineImpl(
     }
     
     private fun extractIperf3Binary(): Boolean {
+        Logger.d(TAG, "Attempting to extract iperf3 binary from assets")
+        
+        // Check if iperf3 binary exists in assets first
+        try {
+            val assetManager = context.assets
+            val assetsList = assetManager.list("")
+            Logger.d(TAG, "Available assets: ${assetsList?.joinToString(", ") ?: "none"}")
+            
+            // Check specifically for iperf3 binary
+            val hasIperf3Asset = try {
+                assetManager.open(IPERF3_BINARY).use { true }
+            } catch (e: java.io.FileNotFoundException) {
+                Logger.i(TAG, "iperf3 binary not found in assets (expected when using jniLibs)")
+                false
+            }
+            
+            if (!hasIperf3Asset) {
+                Logger.i(TAG, "No iperf3 binary in assets, this is expected when using jniLibs approach")
+                return false
+            }
+        } catch (e: Exception) {
+            Logger.w(TAG, "Failed to check assets: ${e.message}")
+            return false
+        }
+        
         // Try different locations for binary extraction
         val locations = listOf(
             context.filesDir,       // /data/data/app/files
