@@ -15,6 +15,7 @@
 
 #define LOG_TAG "Iperf3JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static JavaVM *jvm = NULL;
@@ -208,21 +209,36 @@ Java_com_iperf3client_jni_Iperf3Native_runClient(JNIEnv *env, jobject thiz, jlon
     
     if (result < 0) {
         char *error = iperf_strerror(i_errno);
-        LOGE("iperf3 error: %s", error);
+        LOGE("iperf3 error: %s (errno: %d)", error, i_errno);
+        
+        // Add more user-friendly messages for common errors
+        const char *user_message = error;
+        if (strstr(error, "the server is busy") != NULL) {
+            user_message = "Server is busy with another test. Please try again in a few seconds.";
+            LOGI("Server busy - this is normal if another test is running");
+        } else if (strstr(error, "unable to connect") != NULL) {
+            user_message = "Cannot connect to server. Check if server is running and network is available.";
+        }
+        
         if (callback_obj && on_error_method) {
-            jstring errorStr = (*env)->NewStringUTF(env, error);
+            jstring errorStr = (*env)->NewStringUTF(env, user_message);
             (*env)->CallVoidMethod(env, callback_obj, on_error_method, errorStr);
             (*env)->DeleteLocalRef(env, errorStr);
         }
     } else {
         LOGI("iperf3 test completed successfully");
+        LOGI("Test ran for %d seconds", test->duration);
+        
         if (callback_obj && on_complete_method) {
             // Get JSON result
             char *json = iperf_get_test_json_output_string(test);
             if (json) {
+                LOGI("JSON result available, length: %zu", strlen(json));
                 jstring jsonStr = (*env)->NewStringUTF(env, json);
                 (*env)->CallVoidMethod(env, callback_obj, on_complete_method, jsonStr);
                 (*env)->DeleteLocalRef(env, jsonStr);
+            } else {
+                LOGW("No JSON result available");
             }
         }
     }
