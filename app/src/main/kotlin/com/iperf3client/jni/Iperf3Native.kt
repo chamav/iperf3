@@ -58,8 +58,20 @@ class Iperf3Native {
         streams: Int,
         reverse: Boolean,
         udp: Boolean,
-        callback: Callback
+        callback: Callback,
+        cacheDir: String? = null
     ): Boolean {
+        // Set TMPDIR for iperf3 temporary files
+        if (cacheDir != null) {
+            try {
+                val runtime = Runtime.getRuntime()
+                runtime.exec(arrayOf("sh", "-c", "export TMPDIR=$cacheDir"))
+                System.setProperty("TMPDIR", cacheDir)
+            } catch (e: Exception) {
+                // Ignore errors setting TMPDIR
+            }
+        }
+        
         val testPtr = createTest()
         if (testPtr == 0L) {
             callback.onError("Failed to create test")

@@ -65,6 +65,11 @@ Java_com_iperf3client_jni_Iperf3Native_createTest(JNIEnv *env, jobject thiz) {
     
     // Set default parameters
     iperf_defaults(test);
+    
+    // Set as client mode
+    iperf_set_test_role(test, 'c');
+    
+    // Set callback
     test->reporter_callback = jni_iperf_reporter_callback;
     
     // Set temp directory for Android
@@ -86,6 +91,9 @@ Java_com_iperf3client_jni_Iperf3Native_setTestParams(JNIEnv *env, jobject thiz,
     if (!test) return;
     
     const char *hostname = (*env)->GetStringUTFChars(env, host, 0);
+    
+    LOGI("Setting test params: host=%s, port=%d, duration=%d, streams=%d, reverse=%d, udp=%d",
+         hostname, port, duration, streams, reverse, udp);
     
     iperf_set_test_server_hostname(test, hostname);
     iperf_set_test_server_port(test, port);

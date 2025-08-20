@@ -1093,7 +1093,8 @@ class IperfEngineImpl(
                 streams = params.parallelStreams,
                 reverse = params.reverse,
                 udp = params.protocol == Protocol.UDP,
-                callback = callback
+                callback = callback,
+                cacheDir = context.cacheDir.absolutePath
             )
             
             if (!success) {
