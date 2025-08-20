@@ -62,28 +62,26 @@ class Iperf3Native {
         callback: Callback,
         cacheDir: String? = null
     ): Boolean {
-        // Set TMPDIR for iperf3 temporary files
-        if (cacheDir != null) {
-            try {
-                // Set environment variable for current process
-                val processBuilder = ProcessBuilder()
-                val environment = processBuilder.environment()
-                environment["TMPDIR"] = cacheDir
-                
-                // Also try to set as system property
-                System.setProperty("TMPDIR", cacheDir)
-                
-                // Set in native environment
-                setEnvironmentVariable("TMPDIR", cacheDir)
-            } catch (e: Exception) {
-                // Ignore errors setting TMPDIR
-                e.printStackTrace()
-            }
+        // CRITICAL: Set TMPDIR BEFORE creating test
+        // Android blocks access to /data/local/tmp, so we must use app's cache dir
+        if (cacheDir == null) {
+            callback.onError("Cache directory is required for Android")
+            return false
         }
+        
+        // Set TMPDIR using native method which calls setenv()
+        val envSet = setEnvironmentVariable("TMPDIR", cacheDir)
+        if (!envSet) {
+            callback.onError("Failed to set TMPDIR environment variable")
+            return false
+        }
+        
+        // Log for debugging
+        android.util.Log.i("Iperf3Native", "TMPDIR set to: $cacheDir")
         
         val testPtr = createTest()
         if (testPtr == 0L) {
-            callback.onError("Failed to create test")
+            callback.onError("Failed to create test - check logcat for details")
             return false
         }
         

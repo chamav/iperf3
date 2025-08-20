@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include "iperf_config.h"
@@ -77,6 +78,32 @@ static void jni_iperf_reporter_callback(struct iperf_test *test) {
 
 JNIEXPORT jlong JNICALL
 Java_com_iperf3client_jni_Iperf3Native_createTest(JNIEnv *env, jobject thiz) {
+    // CRITICAL: Check and set TMPDIR before creating test
+    char *cache_dir = getenv("TMPDIR");
+    if (!cache_dir || strlen(cache_dir) == 0) {
+        // If TMPDIR not set, we must fail early as Android blocks /data/local/tmp
+        LOGE("TMPDIR not set! Cannot create test without writable temp directory");
+        LOGE("Android apps cannot write to /data/local/tmp");
+        return 0;
+    }
+    
+    LOGI("TMPDIR is set to: %s", cache_dir);
+    
+    // Verify the directory exists and is writable
+    if (access(cache_dir, F_OK) != 0) {
+        LOGE("TMPDIR %s does not exist", cache_dir);
+        // Try to create it
+        if (mkdir(cache_dir, 0700) != 0 && errno != EEXIST) {
+            LOGE("Failed to create TMPDIR %s: %s", cache_dir, strerror(errno));
+            return 0;
+        }
+    }
+    
+    if (access(cache_dir, W_OK) != 0) {
+        LOGE("TMPDIR %s is not writable: %s", cache_dir, strerror(errno));
+        return 0;
+    }
+    
     struct iperf_test *test = iperf_new_test();
     if (!test) {
         LOGE("Failed to create iperf test");
@@ -95,18 +122,11 @@ Java_com_iperf3client_jni_Iperf3Native_createTest(JNIEnv *env, jobject thiz) {
     // Set callback
     test->reporter_callback = jni_iperf_reporter_callback;
     
-    // Set temp directory for Android - use app's cache directory
-    char *cache_dir = getenv("TMPDIR");
-    if (cache_dir && strlen(cache_dir) > 0) {
-        LOGI("Using TMPDIR for template: %s", cache_dir);
-        // Create template path like /path/to/cache/iperf3.XXXXXX
-        char template_path[256];
-        snprintf(template_path, sizeof(template_path), "%s/iperf3.XXXXXX", cache_dir);
-        iperf_set_test_template(test, template_path);
-    } else {
-        // Don't set template - let iperf3 handle it internally
-        LOGI("No TMPDIR set, using default template handling");
-    }
+    // Set temp template for Android - MUST be set to avoid /data/local/tmp
+    char template_path[256];
+    snprintf(template_path, sizeof(template_path), "%s/iperf3.XXXXXX", cache_dir);
+    LOGI("Setting template path: %s", template_path);
+    iperf_set_test_template(test, template_path);
     
     return (jlong)(intptr_t)test;
 }
