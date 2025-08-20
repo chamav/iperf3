@@ -401,9 +401,101 @@ class IperfEngineImpl(
             }
         }
         
-        // Fallback: try to extract from assets if jniLibs not available
-        Logger.w(TAG, "jniLibs binary not found, trying to extract from assets")
+        // Fallback 1: try to copy from jniLibs to private directory
+        Logger.w(TAG, "jniLibs binary not found at expected location, trying to copy from jniLibs")
+        if (copyFromJniLibs()) {
+            return true
+        }
+        
+        // Fallback 2: try to extract from assets if jniLibs copy failed
+        Logger.w(TAG, "jniLibs copy failed, trying to extract from assets")
         return extractIperf3Binary()
+    }
+    
+    private fun copyFromJniLibs(): Boolean {
+        Logger.d(TAG, "Attempting to copy iperf3 binary from jniLibs to private directory")
+        
+        try {
+            val applicationInfo = context.applicationInfo
+            val nativeLibraryDir = applicationInfo.nativeLibraryDir
+            val sourceFile = File("$nativeLibraryDir/libiperf3.so")
+            
+            Logger.d(TAG, "Looking for jniLibs binary at: ${sourceFile.absolutePath}")
+            
+            if (!sourceFile.exists()) {
+                Logger.w(TAG, "Source file does not exist: ${sourceFile.absolutePath}")
+                return false
+            }
+            
+            Logger.i(TAG, "Found jniLibs binary: ${sourceFile.absolutePath}")
+            Logger.d(TAG, "Source file size: ${sourceFile.length()} bytes")
+            
+            // Try copying to different private directories
+            val targetDirs = listOf(
+                context.filesDir,
+                context.cacheDir,
+                context.codeCacheDir
+            )
+            
+            for (targetDir in targetDirs) {
+                val targetFile = File(targetDir, IPERF3_BINARY)
+                
+                try {
+                    Logger.d(TAG, "Attempting to copy to: ${targetFile.absolutePath}")
+                    
+                    // Remove existing file if present
+                    if (targetFile.exists()) {
+                        targetFile.delete()
+                    }
+                    
+                    // Copy the file
+                    sourceFile.copyTo(targetFile, overwrite = true)
+                    
+                    // Set executable permissions
+                    var success = targetFile.setExecutable(true, false)
+                    if (!success) {
+                        Logger.w(TAG, "Failed to set executable with Java API, trying chmod")
+                        try {
+                            val chmodProcess = Runtime.getRuntime().exec("chmod 755 ${targetFile.absolutePath}")
+                            val exitCode = chmodProcess.waitFor()
+                            success = (exitCode == 0)
+                            if (success) {
+                                Logger.i(TAG, "Set executable permission using chmod")
+                            } else {
+                                Logger.w(TAG, "chmod failed with exit code: $exitCode")
+                            }
+                        } catch (e: Exception) {
+                            Logger.w(TAG, "Failed to execute chmod: ${e.message}")
+                        }
+                    } else {
+                        Logger.i(TAG, "Set executable permission using Java API")
+                    }
+                    
+                    // Verify the copy
+                    val canExecute = targetFile.canExecute()
+                    Logger.i(TAG, "Copied iperf3 binary to: ${targetFile.absolutePath}")
+                    Logger.i(TAG, "Target file size: ${targetFile.length()} bytes")
+                    Logger.i(TAG, "Executable permission: $canExecute")
+                    
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        actualBinaryPath = targetFile.absolutePath
+                        Logger.i(TAG, "Successfully copied iperf3 binary from jniLibs to ${targetDir.name}")
+                        return true
+                    }
+                    
+                } catch (e: Exception) {
+                    Logger.w(TAG, "Failed to copy to ${targetFile.absolutePath}: ${e.message}")
+                    continue
+                }
+            }
+            
+            Logger.e(TAG, "Failed to copy iperf3 binary to any private directory")
+            return false
+            
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to copy from jniLibs", e)
+            return false
+        }
     }
     
     private fun extractIperf3Binary(): Boolean {
