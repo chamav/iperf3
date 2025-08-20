@@ -348,7 +348,34 @@ class IperfEngineImpl(
     }
     
     private fun ensureIperfBinaryReady(): Boolean {
-        // First, try to use jniLibs binary (preferred method for Android 10+)
+        // Method 1: Try to load library using System.loadLibrary (standard Android approach)
+        try {
+            System.loadLibrary("iperf3")
+            Logger.i(TAG, "Successfully loaded libiperf3.so using System.loadLibrary")
+            
+            // Try to find where the system loaded it to get the actual path
+            val applicationInfo = context.applicationInfo
+            val nativeLibraryDir = applicationInfo.nativeLibraryDir
+            val systemLibPath = "$nativeLibraryDir/libiperf3.so"
+            val systemLibFile = File(systemLibPath)
+            
+            if (systemLibFile.exists()) {
+                Logger.i(TAG, "System loaded library at: $systemLibPath")
+                Logger.i(TAG, "Binary size: ${systemLibFile.length()} bytes, executable: ${systemLibFile.canExecute()}")
+                actualBinaryPath = systemLibPath
+                return true
+            } else {
+                Logger.w(TAG, "System.loadLibrary succeeded but cannot locate file at: $systemLibPath")
+                // Continue with manual search even though loadLibrary worked
+            }
+        } catch (e: UnsatisfiedLinkError) {
+            Logger.w(TAG, "System.loadLibrary failed for libiperf3: ${e.message}")
+            Logger.i(TAG, "Falling back to manual library location")
+        } catch (e: Exception) {
+            Logger.w(TAG, "Unexpected error loading library: ${e.message}")
+        }
+        
+        // Method 2: Manual search (fallback from previous implementation)
         val applicationInfo = context.applicationInfo
         val nativeLibraryDir = applicationInfo.nativeLibraryDir
         
@@ -381,27 +408,45 @@ class IperfEngineImpl(
         // Try to list directory contents to debug
         try {
             val nativeDir = File(nativeLibraryDir)
+            Logger.d(TAG, "Native library directory ($nativeLibraryDir) exists: ${nativeDir.exists()}")
             if (nativeDir.exists()) {
                 val files = nativeDir.listFiles()
-                Logger.d(TAG, "Native library directory contents:")
+                Logger.d(TAG, "Native library directory contents (${files?.size ?: 0} files):")
                 files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
-                }
+                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes, isFile: ${file.isFile})")
+                } ?: Logger.w(TAG, "  - files array is null")
             } else {
                 Logger.w(TAG, "Native library directory does not exist: $nativeLibraryDir")
             }
             
             // Also try arm64-v8a directory
             val arm64Dir = File(nativeLibraryDir.replace("/lib/arm64", "/lib/arm64-v8a"))
+            Logger.d(TAG, "arm64-v8a directory (${arm64Dir.absolutePath}) exists: ${arm64Dir.exists()}")
             if (arm64Dir.exists() && arm64Dir != nativeDir) {
                 val files = arm64Dir.listFiles()
-                Logger.d(TAG, "arm64-v8a directory contents:")
+                Logger.d(TAG, "arm64-v8a directory contents (${files?.size ?: 0} files):")
                 files?.forEach { file ->
-                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes)")
+                    Logger.d(TAG, "  - ${file.name} (${file.length()} bytes, isFile: ${file.isFile})")
+                } ?: Logger.w(TAG, "  - files array is null")
+            }
+            
+            // Also try parent directory
+            val parentDir = File(nativeLibraryDir).parentFile
+            if (parentDir?.exists() == true) {
+                Logger.d(TAG, "Parent directory (${parentDir.absolutePath}) contents:")
+                parentDir.listFiles()?.forEach { subDir ->
+                    if (subDir.isDirectory && subDir.name.startsWith("lib")) {
+                        Logger.d(TAG, "  - ${subDir.name}/ (${subDir.listFiles()?.size ?: 0} files)")
+                        subDir.listFiles()?.forEach { file ->
+                            if (file.name.contains("iperf")) {
+                                Logger.i(TAG, "    FOUND iperf file: ${file.absolutePath} (${file.length()} bytes)")
+                            }
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
-            Logger.w(TAG, "Failed to list native library directories: ${e.message}")
+            Logger.e(TAG, "Failed to list native library directories", e)
         }
         
         // Fallback 1: try to copy from jniLibs to private directory
